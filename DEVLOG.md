@@ -244,9 +244,91 @@ CoreSimulator devices 8.1 GB, CocoaPods cache 1.8 GB.
 
 ---
 
+### 0.9 Resuming after a break — patch drift and a pnpm peer-resolution gap
+
+_Session 2, 2026-08-22._ Picking the project back up after a few days. Two things had
+changed on disk without anyone editing source: `package.json` and `pnpm-lock.yaml` were
+dirty. The `package.json` diff was pure SDK 57 patch drift plus a `packageManager` field:
+
+```diff
+-    "expo": "~57.0.14",
+-    "expo-constants": "~57.0.12",
+-    "expo-dev-client": "~57.0.13",
++    "expo": "~57.0.15",
++    "expo-constants": "~57.0.13",
++    "expo-dev-client": "~57.0.14",
+-    "expo-linking": "~57.0.6",
+-    "expo-router": "~57.0.14",
++    "expo-linking": "~57.0.7",
++    "expo-router": "~57.0.15",
++  "packageManager": "pnpm@10.28.0+sha512...."
+```
+
+Worth flagging for the article because it _looks_ alarming ("did I upgrade to the wrong
+SDK?") and isn't: every one of those is a patch bump **inside** SDK 57. The caret/tilde
+ranges we committed permit it, and `expo install` rewrites the pinned string when it
+resolves. The versions that actually define the SDK are unchanged — `react-native@0.86.2`,
+`react@19.2.3`, `expo@~57`. Reading a dependency diff by _range semantics_ rather than by
+"the numbers moved" is a genuinely useful skill to teach.
+
+**Error — `expo-doctor` 20/21, verbatim:**
+
+```
+✖ Check for overridden dependencies
+An incompatible version of a critical dependency is installed, which is unsupported and may cause unexpected behavior.
+"expo-router" should install "@expo/metro-runtime@^57.0.12", but 57.0.11 is installed.
+Advice:
+Reinstall your dependencies and check that they're not in a corrupted state.
+```
+
+The advice ("reinstall your dependencies") is a red herring — reinstalling reproduces it,
+because the cause is structural. `pnpm why` shows that **nothing declares
+`@expo/metro-runtime` as a real dependency**; every single edge is a `peer`:
+
+```
+expo 57.0.15 peer
+├─┬ @expo/cli 57.0.17
+│ ├─┬ @expo/router-server 57.0.7
+│ │ ├── @expo/metro-runtime 57.0.11 peer
+│ │ └─┬ expo-router 57.0.15 peer
+│ │   └── @expo/metro-runtime 57.0.11 peer
+```
+
+So the version came from pnpm's auto-install-peers resolution, which had settled on 57.0.11
+before `expo-router` bumped its requirement to `^57.0.12` in the patch drift above. No
+package.json anywhere pins it, so no reinstall can move it.
+
+**Root cause:** an unpinned auto-installed peer dependency going stale relative to a
+patch-bumped consumer. **Fix** — promote it to a direct dependency so the range is ours to
+control:
+
+```bash
+pnpm add "@expo/metro-runtime@~57.0.12"
+```
+
+Back to **21/21 checks passed**. This is the second time in this project that
+`expo install --fix` could not repair something (the first was `@expo/log-box` in §0.7,
+which it skipped because the package is outside Expo's version map). Both share one root:
+`expo install --fix` only reasons about packages that are (a) direct dependencies and
+(b) in Expo's bundled-version map. Anything else needs a manual pin. That is a genuinely
+non-obvious limitation and belongs in the article.
+
+**Re-validated after the change:** `tsc --noEmit` clean, and `expo export` produces Hermes
+bytecode for both platforms (android 3.7 MB, ios 3.5 MB).
+
+**Disk resolved.** Free space is now **78 GB** (82% used), up from 12 GB — the caches
+flagged in §0.8 were cleared. `ios/Pods` and `Podfile.lock` survived, so no `pod install`
+re-run was needed.
+
+---
+
 ## Phase 0 — findings pending
 
 - [x] ~~Hermes V1 regression~~ → upgraded to SDK 57, 21/21 checks pass
-- [ ] Free disk space before first device builds
+- [x] ~~Free disk space before first device builds~~ → 78 GB free
+- [x] ~~`@expo/metro-runtime` peer drift~~ → pinned as a direct dependency (§0.9)
+- [x] **Android device build — PASSED.** App booted on the physical Android phone.
+- [ ] **iOS device build — outstanding.** iPhone "Fas" (iPhone 13 Pro) reports
+      `unavailable` to `devicectl`; needs USB + unlock + Trust This Computer.
+      This is the remaining half of the Phase 0 gate.
 - [ ] `eas init` (creates the cloud project) — user action, deferred to Phase 5
-- [ ] First build on both physical devices — **blocked: neither device connected**
