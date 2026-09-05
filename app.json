@@ -10,11 +10,12 @@
     "userInterfaceStyle": "automatic",
     "assetBundlePatterns": ["**/*"],
     "ios": {
-      "bundleIdentifier": "com.fasarticle.tapcard",
-      "supportsTablet": false
+      "bundleIdentifier": "com.nfccard.tap",
+      "supportsTablet": false,
+      "appleTeamId": "V993Z3KD7P"
     },
     "android": {
-      "package": "com.fasarticle.tapcard",
+      "package": "com.nfccard.tap",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -31,7 +32,13 @@
       ],
       "expo-font",
       "expo-status-bar",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "react-native-nfc-manager",
+        {
+          "nfcPermission": "TapCard uses NFC to read and write your digital business card to a tag."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
