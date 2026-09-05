@@ -48,18 +48,19 @@ forced on us by NFC rather than chosen.
 
 ## Scripts
 
-| Command                     | Does                                           |
-| --------------------------- | ---------------------------------------------- |
-| `pnpm start`                | Metro for the dev client                       |
-| `pnpm android` / `pnpm ios` | Build and install on a connected device        |
-| `pnpm lint` / `pnpm format` | ESLint + Prettier                              |
-| `npx expo-doctor`           | Validate the project against the installed SDK |
+| Command                     | Does                                                                          |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `pnpm start`                | Metro for the dev client                                                      |
+| `pnpm android` / `pnpm ios` | Build and install on a connected device                                       |
+| `pnpm lint` / `pnpm format` | ESLint + Prettier                                                             |
+| `pnpm test`                 | Jest — the NDEF decoder, tag facts, error mapping and store. No device needed |
+| `npx expo-doctor`           | Validate the project against the installed SDK                                |
 
 ## Status
 
 - [x] **Phase 0** — scaffold, SDK 57, hello screen on both devices
-- [ ] **Phase 1** — NFC plumbing, entitlements, raw NDEF read
-- [ ] **Phase 2** — Read & Tag Info screens, full NDEF parsing
+- [x] **Phase 1** — NFC plumbing, entitlements, raw NDEF read
+- [x] **Phase 2** — Read & Tag Info screens, full NDEF parsing
 - [ ] **Phase 3** — Profile editor, vCard + URL writing, capacity checks
 - [ ] **Phase 4** — `nfc-capabilities`, our own Expo Module in Kotlin + Swift
 - [ ] **Phase 5** — read-only locking, EAS comparison, article prep

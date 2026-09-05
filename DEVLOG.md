@@ -322,13 +322,1105 @@ re-run was needed.
 
 ---
 
+### 0.10 iOS build attempt #1 — `pod install` fails on a stale `Podfile.lock`
+
+iPhone "Fas" finally showed as `available (paired)`, so we ran the build. It died before
+Xcode was even invoked:
+
+```
+$ npx expo run:ios --device
+⚠️  Something went wrong running `pod install` in the `ios` directory.
+Command `pod install --repo-update` failed.
+└─ Cause: This is often due to native package versions mismatching. Try deleting the
+   'ios/Pods' folder or the 'ios/Podfile.lock' file and running 'npx pod-install' to resolve.
+```
+
+**First lesson: the wrapper hid the error.** Expo's CLI summarised the failure and threw the
+actual CocoaPods diagnostic away. Re-running the underlying command by hand is what made it
+solvable — a habit worth teaching explicitly:
+
+```bash
+cd ios && pod install
+```
+
+**The real error, verbatim:**
+
+```
+[!] CocoaPods could not find compatible versions for pod "ExpoModulesCore":
+  In snapshot (Podfile.lock):
+    ExpoModulesCore (from `../node_modules/expo-modules-core/ExpoModulesCore.podspec`)
+
+  In Podfile:
+    ExpoModulesCore (from `../node_modules/expo-modules-core/ExpoModulesCore.podspec`)
+
+It seems like you've changed the version of the dependency `ExpoModulesCore` and it differs
+from the version stored in `Pods/Local Podspecs`.
+You should run `pod update ExpoModulesCore --no-repo-update` to apply changes made locally.
+```
+
+That message is confusing on purpose-of-fact: it prints the _same_ source line twice, because
+for a path-based local podspec the _source_ never changed — only the resolved **version** did.
+
+**Root cause.** Three files disagreed:
+
+| File                                                   | `expo-modules-core` version |
+| ------------------------------------------------------ | --------------------------- |
+| `node_modules/expo-modules-core/package.json`          | 57.0.12                     |
+| `ios/Pods/Local Podspecs/ExpoModulesCore.podspec.json` | 57.0.12                     |
+| `ios/Podfile.lock`                                     | **57.0.11** ← stale         |
+
+`ExpoModulesCore.podspec` reads its version straight from `package.json`
+(`s.version = package['version']`), so the SDK 57 patch drift from §0.9 silently changed the
+podspec's version. `Podfile.lock` was generated back at §0.8 and still pinned the old one.
+This is the iOS-side consequence of the same drift — **a JS-level dependency bump
+invalidated the native lockfile**, and nothing warned us until build time.
+
+**Second lesson: CocoaPods' own advice was wrong.** It suggested
+`pod update ExpoModulesCore --no-repo-update`, which fixes one pod. We checked the real
+scope first by diffing every `Podfile.lock` version against its `node_modules` counterpart —
+**14 pods had drifted, not one:**
+
+```
+EXConstants                 57.0.12 -> 57.0.13
+Expo                        57.0.14 -> 57.0.15
+ExpoAsset                   57.0.12 -> 57.0.13
+ExpoFileSystem               57.0.4 -> 57.0.5
+ExpoLinking                  57.0.6 -> 57.0.7
+ExpoModulesCore             57.0.11 -> 57.0.12
+ExpoModulesJSI               57.0.4 -> 57.0.5
+ExpoModulesWorklets         57.0.11 -> 57.0.12
+ExpoModulesWorkletsAdapter  57.0.11 -> 57.0.12
+ExpoRouter                  57.0.14 -> 57.0.15
+ExpoUI                      57.0.11 -> 57.0.12
+expo-dev-client             57.0.13 -> 57.0.14
+expo-dev-launcher           57.0.13 -> 57.0.14
+expo-dev-menu               57.0.13 -> 57.0.14
+```
+
+Taking the advice literally would have fixed pod 1 of 14 and produced the identical error for
+pod 2. Measuring the blast radius before acting turned fourteen round-trips into one.
+
+_(`Yoga` and `hermes-engine` also appear to drift under a naive comparison. They are false
+positives: `Yoga.podspec` hardcodes `0.0.0` and `hermes-engine` is versioned by the Hermes
+build stamp, not by React Native's `package.json`. Worth mentioning so readers running the
+same diff do not chase them.)_
+
+**Fix.** Delete the lockfile and let CocoaPods re-resolve the whole graph:
+
+```bash
+rm ios/Podfile.lock
+cd ios && pod install
+```
+
+Safe here, and worth explaining _why_ rather than presenting it as a ritual: every drifted pod
+is a **local, path-based** podspec, so versions are read from `node_modules` on disk — there
+is no remote registry that could hand us a surprise version. Deleting the lock cannot pull
+anything unexpected. `ios/Pods/` was left in place, so nothing re-downloaded.
+
+Result — `110 total pods installed`, and the resolved versions now match:
+
+```
+- ExpoModulesCore (57.0.12)
+- expo-dev-client (57.0.14)
+```
+
+Re-ran the drift diff: 0 real drifts remaining.
+
+The three `[!] ... has added 2 script phases` warnings for `ExpoFileSystem`,
+`ExpoModulesCore` and `ExpoModulesWorklets` are **not** errors — they are Expo's precompiled
+`.xcframework` phases. Expected, and noise a reader will otherwise mistake for a problem.
+
+**Third lesson, and the one for the article:** the Android build hit nothing comparable.
+Gradle resolves native module versions from `node_modules` at _every_ build, so the JS-level
+patch drift was absorbed invisibly. iOS has a second, independently-versioned lockfile that
+must be kept in sync by hand. Same drift, same commit, two completely different outcomes —
+logged in PLATFORM-NOTES §1.
+
+### 0.11 Build attempt #2 — `| tee` silently disabled the interactive prompts
+
+Own goal, and a good one for the article because the error message names a "mode" nobody
+opted into:
+
+```
+$ npx expo run:ios --device 2>&1 | tee /tmp/ios-build.log
+CommandError: Input is required, but 'npx expo' is in non-interactive mode.
+Required input:
+> Select a device
+```
+
+**Root cause.** Piping to `tee` replaces stdout with a pipe, so `process.stdout.isTTY`
+becomes `undefined`. Expo (like most modern CLIs) treats that as "not a human" and refuses
+to prompt. Demonstrated directly:
+
+```bash
+$ script -q /dev/null node -e "console.log(process.stdout.isTTY)"   # true
+$ node -e "console.log(process.stdout.isTTY)" | cat                 # undefined
+```
+
+The advice "capture the build log with `| tee`" is reflexively good and actively wrong for
+any command that needs to prompt. Two fixes, both worth knowing:
+
+1. **Remove the reason to prompt.** `-d, --device [device]` accepts a name or UDID:
+   ```bash
+   npx expo run:ios --device Fas
+   ```
+2. **Keep a real TTY while still logging** — `script(1)` allocates a pty, so the child
+   still sees a terminal:
+   ```bash
+   script -q /tmp/ios-build.log npx expo run:ios --device Fas
+   ```
+   (Caveat: `script` records raw terminal output, so the log contains ANSI escape codes.)
+
+Not platform-specific — the same trap applies to `npx expo run:android` — so this stays in
+DEVLOG rather than PLATFORM-NOTES.
+
+---
+
 ## Phase 0 — findings pending
 
 - [x] ~~Hermes V1 regression~~ → upgraded to SDK 57, 21/21 checks pass
 - [x] ~~Free disk space before first device builds~~ → 78 GB free
 - [x] ~~`@expo/metro-runtime` peer drift~~ → pinned as a direct dependency (§0.9)
 - [x] **Android device build — PASSED.** App booted on the physical Android phone.
-- [ ] **iOS device build — outstanding.** iPhone "Fas" (iPhone 13 Pro) reports
-      `unavailable` to `devicectl`; needs USB + unlock + Trust This Computer.
-      This is the remaining half of the Phase 0 gate.
+- [x] ~~iPhone "Fas" unreachable~~ → now `available (paired)`
+- [x] ~~`pod install` failure on stale `Podfile.lock`~~ → 14 drifted pods re-resolved (§0.10)
+- [x] **iOS device build — PASSED.** App built and booted on iPhone "Fas" (iPhone 13 Pro).
+- [x] **PHASE 0 GATE PASSED — both physical devices.**
 - [ ] `eas init` (creates the cloud project) — user action, deferred to Phase 5
+
+---
+
+## Phase 1 — NFC plumbing
+
+### 1.1 Library survey before installing
+
+`react-native-nfc-manager` is still at **3.17.2** (published 2025-11-28). Before adding it we
+unpacked the tarball and read it, rather than trusting the Phase 0 notes. Two of the three
+risks flagged in Phase 0 turned out to be **false alarms**, which is worth saying plainly —
+predicting native breakage from a `build.gradle` skim is easy and often wrong.
+
+| Phase 0 prediction                                                                                   | Reality                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `implementation 'com.facebook.react:react-native:+'` will fail — modern RN publishes `react-android` | ✅ **Non-issue.** The React Native Gradle Plugin installs a dependency _substitution_ rule: `com.facebook.react:react-native` → `react-android` at the pinned version. See `DependencyUtils.kt`: _"Substituting `react-native` with `react-android`"_.                                                        |
+| The ancient `compileSdkVersion` / `minSdkVersion` method DSL will fail on a modern AGP               | ✅ **Non-issue here.** That DSL is deprecated in AGP 8.x and only _removed_ in AGP 9. We resolved the actual toolchain: **AGP 8.12.0**, Gradle 9.3.1, Kotlin 2.1.20. It compiles. (Had Expo shipped AGP 9, this library would be dead in the water — worth stating as a real future risk, not a current one.) |
+| `s.platform = :ios, "8.0"` in the podspec vs a 16.4 deployment target                                | ✅ **Non-issue.** A pod declaring a _lower_ floor is fine; CocoaPods takes the project's target, and Expo's `post_install` raises pod targets anyway.                                                                                                                                                         |
+| The bundled config plugin does not add the Android `NDEF_DISCOVERED` intent filter                   | ❌ **Confirmed.** Verified against the generated manifest below. Still ours to write in Phase 3.                                                                                                                                                                                                              |
+| No `codegenConfig` / TurboModule spec — legacy bridge module                                         | ❌ **Confirmed.** `package.json` has no `codegenConfig`; `src/NativeNfcManager.js` uses `NativeModules.NfcManager` + `new NativeEventEmitter(...)`. On bridgeless SDK 57 this runs through RN's TurboModule **interop** layer.                                                                                |
+
+How to resolve the AGP version yourself, since it is not written literally in any file
+(Expo's `android/build.gradle` declares `classpath('com.android.tools.build:gradle')` with no
+version):
+
+```bash
+cd android && ./gradlew buildEnvironment | grep "tools.build:gradle"
+#  +--- com.android.tools.build:gradle:8.12.0
+```
+
+### 1.2 The library's TypeScript types are invalid TypeScript
+
+We are TypeScript throughout, so we checked the types before writing against them.
+`package.json` has **no `types` field**; a single `index.d.ts` sits in the package root, which
+TypeScript finds by convention. Its structure is odd — a `declare module 'react-native-nfc-manager'`
+block _plus_ a stray top-level `export default nfcManager;` on the last line.
+
+First question: do the types actually apply, or is everything silently `any`? A `@ts-expect-error`
+probe answers it definitively — if the types were `any`, the expected errors would not occur and
+`tsc` would flag each directive as unused:
+
+```ts
+// @ts-expect-error — bogus method must error if types are real
+await NfcManager.thisMethodDoesNotExist();
+// @ts-expect-error — isSupported() returns Promise<boolean>, not string
+const s: string = await NfcManager.isSupported();
+```
+
+Clean. **The types are real and enforced.** Good news, and a technique worth teaching: to prove
+a type definition is doing work, assert that it _rejects_ something.
+
+Second question answered accidentally — the file does not actually compile:
+
+```
+node_modules/react-native-nfc-manager/index.d.ts(90,30): error TS1246: An interface property cannot have an initializer.
+node_modules/react-native-nfc-manager/index.d.ts(91,31): error TS1246: An interface property cannot have an initializer.
+```
+
+```ts
+export interface CancelTechReqOpts {
+  throwOnError?: boolean = false;     // <- illegal: interfaces cannot carry defaults
+  delayMsAndroid?: number = 1000;
+}
+```
+
+It builds only because Expo's base config sets `"skipLibCheck": true`, which uses a `.d.ts`'s
+types without type-checking the file itself. A dependency shipping broken types that nobody
+notices is a nice, concrete illustration of what that flag really buys — and what it hides.
+
+### 1.3 Installing and wiring the plugin
+
+```bash
+npx expo install react-native-nfc-manager
+```
+
+`expo install` added the config plugin to `app.json` automatically. We then gave it a real
+usage string, because the default (`"Interact with nearby NFC devices"`) is what iOS shows the
+user inside the system NFC sheet:
+
+```json
+[
+  "react-native-nfc-manager",
+  { "nfcPermission": "TapCard uses NFC to read and write your digital business card to a tag." }
+]
+```
+
+Reading `app.plugin.js` first told us exactly what the plugin does and does not do —
+iOS entitlement + `NFCReaderUsageDescription` + `android.permission.NFC` + an attempted
+`compileSdkVersion` bump. No Android intent filter.
+
+### 1.4 `expo prebuild` — a config plugin failing loudly but harmlessly
+
+```bash
+npx expo prebuild --clean
+```
+
+```
+» android: withBuildScriptExtVersion: Cannot set minimum buildscript.ext.compileSdkVersion
+  version because the property "compileSdkVersion" cannot be found or does not have a numeric value.
+```
+
+**Root cause.** The plugin does _static text surgery_ on `android/build.gradle`, looking for an
+`ext { compileSdkVersion = … }` block so it can force it to ≥ 31 (the library needs Android 12
+APIs). Expo's SDK 57 template no longer has that block — `android/app/build.gradle` reads
+`rootProject.ext.compileSdkVersion`, which the `expo-root-project` Gradle plugin injects at
+_configuration_ time. There is no literal value in the file for the plugin to find, so its edit
+silently does nothing and it warns.
+
+**Does it matter?** No — and we checked rather than assuming:
+
+```bash
+cd android && ./gradlew -q :app:properties | grep -iE "^(compile|min|target)Sdk"
+# compileSdkVersion: 36
+# minSdkVersion: 24
+# targetSdkVersion: 36
+```
+
+36 ≥ 31, so the guarantee the plugin wanted holds anyway. Good article beat: a config plugin
+written against an older template shape, failing visibly, and being saved by the ecosystem
+having moved _forward_ rather than back. It also shows why config-plugin warnings deserve
+reading — this one was benign, but nothing about the message says so.
+
+**Generated output, verified:**
+
+```xml
+<!-- android/app/src/main/AndroidManifest.xml -->
+<uses-permission android:name="android.permission.NFC"/>
+```
+
+```xml
+<!-- ios/TapCard/TapCard.entitlements -->
+<key>com.apple.developer.nfc.readersession.formats</key>
+<array><string>NDEF</string><string>TAG</string></array>
+```
+
+```
+$ plutil -extract NFCReaderUsageDescription raw ios/TapCard/Info.plist
+TapCard uses NFC to read and write your digital business card to a tag.
+```
+
+And `grep -c NDEF_DISCOVERED android/app/src/main/AndroidManifest.xml` → **0**, confirming the
+Phase 0 prediction. Android has the _permission_ to use NFC but no registration to be _launched_
+by a tag. Phase 3.
+
+### 1.5 The iOS/Android asymmetry is already visible in the library source
+
+Before writing our own capability module in Phase 4, it is worth seeing that the library itself
+cannot paper over the difference:
+
+```js
+// src/NfcManagerAndroid.js
+isEnabled = () => handleNativeException(callNative('isEnabled'));
+goToNfcSetting = () => handleNativeException(callNative('goToNfcSetting'));
+
+// src/NfcManagerIOS.js
+isEnabled = async () => {
+  return true; // <- hardcoded
+};
+// ...and no goToNfcSetting at all.
+```
+
+On Android, "has NFC hardware" and "NFC is switched on" are two different questions, because
+the user can toggle it. On iOS there is no toggle, so `isEnabled` is a constant and a
+"open NFC settings" call has nothing to open. This is precisely the asymmetry Phase 4's
+`nfc-capabilities` module exists to model explicitly instead of hiding. `lib/nfc.ts` documents
+the `unreachable-by-construction` branch inline.
+
+### 1.6 What we built
+
+- **`lib/nfc.ts`** — `startNfc()` (memoised, never rejects), `checkNfcStatus()` →
+  `checking | ready | disabled | unsupported`, `readTagOnce()`, plus hex/type formatting helpers.
+  `startNfc` guards on `Device.isDevice` first, because `isSupported()` is not trustworthy on a
+  simulator.
+- **`app/_layout.tsx`** — `NfcManager.start()` once at app launch, so no screen has to care.
+- **`app/(tabs)/index.tsx`** — capability gate, a Scan button, and a raw dump: tag id, type,
+  tech types, max size, then per-record TNF / type / payload hex, then the whole `TagEvent` as
+  JSON. Phase 1 deliberately shows raw errors instead of friendly ones — we want to _observe_
+  how each platform reports cancels and timeouts before designing around them in Phase 2.
+- **`components/Mono.tsx`** — see below.
+
+**Bug avoided: `font-mono` does nothing in React Native.** Tailwind's `font-mono` is a _web_
+font stack (`ui-monospace, SFMono-Regular, Menlo, …`). React Native's `fontFamily` accepts one
+real family name and silently ignores what it cannot resolve, so hex dumps would have rendered
+in the default sans font with no warning. The correct family also differs per platform — iOS
+ships **Menlo**, Android resolves the generic alias **monospace**:
+
+```ts
+const family = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
+```
+
+A small thing, but a good example of a web-shaped Tailwind utility that is a no-op on native.
+
+### 1.7 iOS signing — the wildcard profile that quietly worked, and now will not
+
+Inspecting the Phase 0 build's signing turned up two things worth recording.
+
+**1. The team is not the one we chose.** Phase 0 picked Recdek Ltd (`V993Z3KD7P`), but the
+successful build wrote:
+
+```json
+"ios": { "appleTeamId": "533Y5NB8YV" }     // Talaris Capital and Investments Ltd
+```
+
+`expo run:ios` persists the selected team into `app.json`, so an interactive choice becomes
+committed config — a mis-click at a prompt silently becomes project configuration, which is a
+genuinely surprising thing about the local build flow and worth calling out.
+
+**Corrected to Recdek Ltd (`V993Z3KD7P`)**, the team chosen in Phase 0, keeping
+`com.fasarticle.tapcard` alongside the existing `com.fasarticle.droptrack` in one team. Switching
+turned out to be a one-line change plus a regenerate, because `ios.appleTeamId` is consumed by a
+config plugin rather than being hand-edited in Xcode:
+
+```
+node_modules/@expo/config-plugins/build/ios/DevelopmentTeam.js   -> withDevelopmentTeam
+```
+
+```bash
+# app.json: "ios": { "appleTeamId": "V993Z3KD7P" }
+npx expo prebuild -p ios
+grep DEVELOPMENT_TEAM ios/TapCard.xcodeproj/project.pbxproj
+#   DEVELOPMENT_TEAM = V993Z3KD7P;   (x2 — Debug and Release)
+```
+
+This is the CNG (Continuous Native Generation) payoff in miniature, and worth stating explicitly
+for the article: because `ios/` is generated and gitignored, changing the signing team is an edit
+to _declarative config_ rather than a hunt through Xcode's Signing & Capabilities UI. The
+entitlement, usage string and bundle ID were all reproduced identically by the regenerate — the
+only thing that changed is the one value we asked to change.
+
+**2. Phase 0 signed against a wildcard profile — and that cannot survive Phase 1.** There is no
+`com.fasarticle.tapcard` profile on disk at all:
+
+```bash
+for f in ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/*.mobileprovision; do
+  security cms -D -i "$f" | plutil -extract Entitlements.application-identifier raw -
+done | sort
+# 533Y5NB8YV.*                         <- the Phase 0 build matched THIS
+# 533Y5NB8YV.com.remotingwork.mobileapps
+# ...17 profiles, and grep for "nfc.readersession" across all of them -> 0
+```
+
+The Phase 0 app had no entitlements, so the team's wildcard profile (`533Y5NB8YV.*`) matched and
+Xcode signed it without anyone creating an App ID. **Apple does not allow special capabilities
+such as NFC Tag Reading on a wildcard App ID.** Now that `TapCard.entitlements` requests
+`com.apple.developer.nfc.readersession.formats`, no profile on this machine can satisfy it, and
+none can be generated until an _explicit_ App ID with the capability enabled exists in the portal.
+
+This is the cleanest example in the project of the iOS server-side configuration step having no
+Android counterpart: the entitlement file is necessary but **not sufficient**, and the missing
+half lives on Apple's servers. Expect the next iOS build to fail at signing until the portal
+steps are done. Predicted, not accidental.
+
+### 1.8 Renaming the app identifier — one config edit, two platforms
+
+Changed the identifier from `com.fasarticle.tapcard`, on both platforms at once, before the Apple
+App ID was registered. Doing it before registration matters: **App IDs cannot be renamed in the
+Apple Developer portal.** Registering first and renaming after would have left a dead App ID and
+required creating a second one.
+
+The first choice, `com.tapcard.app`, was **rejected by the portal as unavailable**. Worth a line in
+the article because the constraint surprises people: **App IDs are globally unique across every
+Apple Developer account, not per-team.** A short, generic, brandable-sounding identifier is
+therefore very likely to be already claimed by a stranger — and the portal tells you only at
+registration time, long after the ID is baked into your project config, your Android package name,
+and your Kotlin source tree.
+
+The practical rule this teaches: pick a prefix under a domain you actually control, and register
+the App ID _early_, before the identifier has propagated through the project. Settled on
+**`com.nfccard.tap`**.
+
+```json
+"ios":     { "bundleIdentifier": "com.nfccard.tap" },
+"android": { "package":          "com.nfccard.tap" }
+```
+
+```bash
+npx expo prebuild --clean
+```
+
+Verified across both generated projects:
+
+|                                       | Before                         | After                    |
+| ------------------------------------- | ------------------------------ | ------------------------ |
+| iOS `PRODUCT_BUNDLE_IDENTIFIER`       | `com.fasarticle.tapcard`       | `com.tapcard.app`        |
+| Android `namespace` / `applicationId` | `com.fasarticle.tapcard`       | `com.tapcard.app`        |
+| Android Kotlin source path            | `java/com/fasarticle/tapcard/` | `java/com/tapcard/app/`  |
+| iOS `DEVELOPMENT_TEAM`                | `V993Z3KD7P`                   | `V993Z3KD7P` (unchanged) |
+| NFC entitlement + usage string        | present                        | present                  |
+
+`grep -rl "fasarticle\|tapcard\.app" android ios` → nothing. Note that **Android's Kotlin source directory tree
+was physically regenerated** to match the new package (`MainActivity.kt`, `MainApplication.kt`
+moved), which in a hand-managed Android project is a genuinely annoying refactor — package
+declarations, directory layout, and Gradle config all have to agree.
+
+This is the strongest CNG argument in the project so far, and a good one for the article:
+renaming an app identifier is normally a multi-step, error-prone operation on _each_ platform —
+Xcode project settings, entitlement re-provisioning, Android package refactor, manifest updates.
+Here it was **two lines of JSON and one command**, because the native projects are build
+artifacts rather than source. The cost of that convenience is the flip side we already paid in
+§0.10: generated projects mean no hand-editing, and a lockfile that can drift.
+
+_(The `withBuildScriptExtVersion` warning from §1.4 reappeared, as expected — it fires on every
+`prebuild` and is still harmless.)_
+
+### 1.9 The predicted signing failure, and why the error never mentions NFC clearly
+
+§1.7 predicted the next iOS build would fail at code signing. It did, verbatim:
+
+```
+› Auto signing app using team(s): V993Z3KD7P
+› Planning build
+❌  TapCard/TapCard: Provisioning Profile "iOS Team Provisioning Profile: *" does not support the NFC Tag Reading capability.
+❌  TapCard/TapCard: Entitlements file defines the value "com.apple.developer.nfc.readersession.formats" which is not registered for profile "iOS Team Provisioning Profile: *".
+
+CommandError: Failed to build iOS project. "xcodebuild" exited with error code 65.
+```
+
+Note the profile name: **`iOS Team Provisioning Profile: *`** — the team _wildcard_. That single
+asterisk is the whole story. With no explicit App ID registered, Xcode's automatic signing had
+nothing better to match, fell back to the wildcard, and the wildcard structurally cannot carry a
+special capability.
+
+Xcode 26 is unusually clear here (older versions produced a generic "no profile matching" error),
+but two things still mislead:
+
+1. It reads as a _local_ problem — "entitlements file defines a value" sounds like our file is
+   wrong. Our file is correct. The missing piece was on Apple's servers.
+2. A second, unrelated error appeared **above** it from the previous attempt, and looks far more
+   alarming than it is:
+
+```
+Build input file cannot be found: '/Users/fas/Library/Developer/Xcode/UserData/Provisioning Profiles/a33f753b-2889-4046-8a9a-dadae1fde876.mobileprovision'.
+Did you forget to declare this file as an output of a script phase or custom build rule which produces it?
+```
+
+That UUID appears **nowhere in the project** (`grep -rn a33f753b ios/` → nothing). It was a stale
+profile Xcode had cached and then replaced. The suggested fix ("declare this file as an output of
+a script phase") is a complete red herring — nothing in our build produces provisioning profiles.
+Worth including in the article as a lesson in reading Xcode errors: check whether the file it
+names is something _you_ own before acting on the advice.
+
+**Resolution — register an explicit App ID.** In the Apple Developer portal, team Recdek Ltd
+(`V993Z3KD7P`): Identifiers → ＋ → App IDs → App → Bundle ID **Explicit** = `com.nfccard.tap`,
+tick **NFC Tag Reading**, Register. Xcode then generated a matching profile on its own.
+
+Verifying it from the command line rather than trusting the UI — useful because the profile is a
+CMS-signed blob, not readable text:
+
+```bash
+PROF=~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/<uuid>.mobileprovision
+security cms -D -i "$PROF" > /tmp/prof.plist
+plutil -extract Entitlements xml1 -o - /tmp/prof.plist
+```
+
+```xml
+<key>application-identifier</key>
+<string>V993Z3KD7P.com.nfccard.tap</string>
+<key>com.apple.developer.nfc.readersession.formats</key>
+<array>
+  <string>NDEF</string>
+  <string>TAG</string>
+  <string>PACE</string>
+</array>
+```
+
+Note Apple granted **`PACE`** as well, a superset of the `[NDEF, TAG]` our entitlements file
+requests. A profile may carry more than the app asks for; it must not carry less.
+
+_(Gotcha while checking this: `plutil -extract` treats dots as key-path separators, so
+`-extract Entitlements.com.apple.developer.nfc...` silently returns nothing — it goes looking for
+nested keys named `com`, `apple`, `developer`. It reads as "the entitlement is missing" when it is
+present. Extract the whole `Entitlements` dict instead.)_
+
+Also confirmed the profile actually covers the test device before rebuilding — a profile can be
+valid and still not include the phone in your hand:
+
+```bash
+plutil -extract ProvisionedDevices xml1 -o - /tmp/prof.plist | grep -c 00008110-001E2D6E02EA401E   # 1
+```
+
+**The article point.** On Android, adding NFC is one manifest line and you are done. On iOS the
+same feature needs: an entitlements file (generated), an App ID registered in a web portal, a
+capability ticked on that App ID, a regenerated provisioning profile, and a paid membership for
+any of it to exist — and if you miss the portal half, the failure surfaces as a **code-signing**
+error that never says the word "NFC" in a way that points you to a website. The local
+configuration is necessary but not sufficient, and the error message does not tell you which half
+is missing.
+
+---
+
+## ⏸ Paused 2026-08-22 — waiting on hardware
+
+Phase 1 is code-complete and the iOS build is signed, built and installed on the test device, but
+**the Phase 1 gate cannot be closed: the NFC chips were lost.** Replacements are expected around
+2026-08-29.
+
+Nothing is blocked on code. Static verification is green — `tsc`, ESLint, Prettier clean,
+`expo-doctor` 21/21, both platforms bundling to Hermes bytecode — and the app runs on iPhone "Fas".
+What is missing is the only thing that cannot be faked: a physical tag.
+
+Worth stating plainly for the article, because it is the defining constraint of NFC work rather
+than an inconvenience: **there is no simulator path.** NFC does not exist on the iOS Simulator or
+the Android emulator. No amount of unit testing, mocking or CI substitutes for holding a chip
+against a phone. Every claim in PLATFORM-NOTES.md that is marked ⏳ is marked that way precisely
+because we refuse to write down behaviour we have not observed on hardware.
+
+Two data points the comparison document is explicitly waiting on:
+
+1. Blank-tag readout per platform — id, tech types, and **max size** (the NTAG213 ~144-byte figure
+   that drives Phase 3's vCard capacity warning).
+2. The verbatim error each platform produces when the user cancels a scan. Phase 1 renders raw
+   errors on purpose so that Phase 2's error UX is designed around observed behaviour rather than
+   assumption.
+
+Also deliberately deferred: `expo-doctor` reports
+`Untested on New Architecture: react-native-nfc-manager`. This is accurate and already understood
+(§1.1 — legacy bridge module, no `codegenConfig`, running through RN's TurboModule interop layer).
+Rather than leave a permanently red check for a future session to re-investigate, the acceptance is
+now explicit in `package.json`:
+
+```json
+"expo": { "doctor": { "reactNativeDirectoryCheck": { "exclude": ["react-native-nfc-manager"] } } }
+```
+
+Suppressing a warning is normally the wrong instinct. It is defensible here only because the
+underlying fact is documented, understood, and is itself the motivation for Phase 4 — and the
+exclusion names the single package rather than disabling the check. Worth showing the reasoning in
+the article, not just the config line.
+
+Resume instructions live in `NEXT-SESSION.md` (working state, not article material).
+
+---
+
+## ▶ Resumed 2026-09-05 — the chips arrived
+
+Two weeks of hold, ended by a padded envelope. Everything below is the first Phase 1 data
+observed on real hardware.
+
+### 1.10 What rots while a project sits still
+
+Before any NFC work, the environment had to be rebuilt — and the shape of the rot is worth
+recording, because it is the normal cost of pausing a React Native project rather than a fault.
+
+`node_modules/` and `ios/Pods/` were both gone, cleared by the disk-space cleanup that recovered
+the machine from 97% full during Phase 0. `pnpm install` restored the JS side in **4.4 seconds**
+with zero downloads — every package came from the content-addressed store, and `pnpm-lock.yaml`
+was unchanged, which is the whole argument for committing a lockfile. `tsc --noEmit` was clean
+immediately.
+
+`ios/Pods/` is the asymmetric half again (§0.10, PLATFORM-NOTES §1): restoring it requires a
+separate `pod install`, and `ios/Podfile.lock` survived, so the next iOS build re-resolves from a
+lockfile that is still correct for 57.0.15. Android needs no equivalent step at all — Gradle
+re-resolves from `node_modules` every build, so restoring `node_modules` restored Android's native
+dependency graph too, for free. **Two ecosystems, one command versus two.**
+
+Expo also offered `57.0.15 → ~57.0.20` on startup. Declined deliberately: taking an SDK patch bump
+immediately before a hardware gate is exactly the move that cost three build attempts in §0.9–0.10,
+because a JS-only version change silently invalidates `Podfile.lock`. The upgrade is fine — the
+timing would not be. **Do not change the build inputs on the day you finally get to test the
+build.**
+
+One environment note with no NFC content but real cost: `npx expo start` refused to start because
+port 8081 was held by an unrelated project's Metro instance, and in a non-interactive shell its
+"use 8082 instead?" prompt has nothing to answer it, so it exits 1 with `Skipping dev server`.
+Second time this project has been bitten by Expo's interactivity assumptions (§0.11 was the `| tee`
+one).
+
+### 1.11 The iOS Phase 1 gate — the sheet appeared
+
+`npx expo start --dev-client`, opened TapCard on iPhone "Fas" (iPhone 13 Pro, **iOS 26.5**), Read
+tab, **Scan a tag**.
+
+Apple's system NFC sheet slid up. That single fact closes the thread that has been open since
+§1.7: **the sheet is drawn by CoreNFC and CoreNFC will not draw it for an app whose provisioning
+profile lacks NFC Tag Reading.** Two weeks earlier this same code path died at build time with
+`Provisioning Profile "iOS Team Provisioning Profile: *" does not support the NFC Tag Reading
+capability`. The explicit `com.nfccard.tap` App ID registered in the Recdek portal (§1.9) is what
+changed, and the sheet rendering is the proof it worked. Nothing in the local project is different
+in kind — the fix lived on Apple's servers.
+
+Confirmed the build under test was the right one before trusting any of this, since the rename in
+§1.8 left two identically-named **TapCard** icons on the phone:
+
+```bash
+xcrun devicectl device info processes --device Fas | grep TapCard
+# 947  /private/var/containers/Bundle/Application/4AA2E5CA-…/TapCard.app/TapCard
+xcrun devicectl device info apps --device Fas --json-output /tmp/apps.json
+# com.fasarticle.tapcard  → …/7B3B3CD9-…/TapCard.app/
+# com.nfccard.tap         → …/4AA2E5CA-…/TapCard.app/
+```
+
+The running container matched `com.nfccard.tap`. Worth writing down as a technique: after an
+identifier rename, the app **name** no longer identifies the build, and the bundle-container UUID
+is the only thing that does.
+
+**And a correction to our own prediction.** `NEXT-SESSION.md` expected the sheet to display
+_"TapCard uses NFC to read and write your digital business card to a tag."_ It does not. It shows:
+
+> **Ready to Scan**
+> Hold your iPhone near the NFC tag.
+
+Those are two different strings from two different places, and we had conflated them:
+
+| String                                                                      | Where it is set                                                    | Where iOS shows it                                     |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------ |
+| `"TapCard uses NFC to read and write your digital business card to a tag."` | `NFCReaderUsageDescription`, via the plugin in `app.json`          | **Never in the scan sheet.** A privacy-manifest string |
+| `"Hold your iPhone near the NFC tag."`                                      | `alertMessage`, passed to `requestTechnology()` at `lib/nfc.ts:88` | The sheet body, on every scan                          |
+
+`NFCReaderUsageDescription` is mandatory — the app will not launch a reader session without it —
+but it is a declaration to Apple and to the privacy report, not user-facing copy. The string the
+user actually reads is the one you pass per-scan, which means **it can differ per scan**, and Phase
+3 should say "Hold your iPhone near the tag to write" rather than reusing the read copy. PLATFORM-
+NOTES §2 has been corrected; it claimed the usage description was "shown in the system NFC sheet".
+
+Good article material precisely because it is invisible without hardware: both strings are
+configured, both are spelled correctly, the app works, and the documentation-shaped assumption
+about which one appears is still wrong.
+
+### 1.12 What iOS actually hands back: two fields
+
+Held a factory-fresh NTAG213 to the **top edge** of the phone. The sheet showed its success
+checkmark and the app rendered:
+
+| Field        | Value            |
+| ------------ | ---------------- |
+| ID           | `04C4FC91DF2A81` |
+| Type         | `(none)`         |
+| Tech types   | `(none)`         |
+| Max size     | `(unknown)`      |
+| NDEF records | `0`              |
+
+```json
+{
+  "id": "04C4FC91DF2A81",
+  "tech": "mifare"
+}
+```
+
+Three things to read out of that.
+
+**The tag is what we ordered.** A 7-byte UID beginning `04` is NXP's manufacturer code and the
+NTAG21x signature.
+
+**`NDEF records: 0` is the good outcome, not a failure.** `requestTechnology(NfcTech.Ndef)`
+_resolved_ rather than throwing, which means the chip is already NDEF-formatted and simply carries
+an empty message. §1.6 flagged the risk that factory-fresh tags arrive **unformatted**, in which
+case the `Ndef` technology request fails outright and Android reports `NdefFormatable` instead.
+These chips ship pre-formatted, so that path stays untested for now — Phase 2 must still handle it,
+but it is no longer blocking.
+
+**The important result is everything absent.** `(none)` and `(unknown)` are not nulls being
+prettified: the raw dump is the entire object, and `type`, `techTypes` and `maxSize` are simply
+**not present as keys**. iOS returns two fields. `tech: "mifare"` is CoreNFC's family
+classification — NTAG is NXP's MiFare Ultralight line — and is not the same thing as Android's
+`techTypes` array.
+
+This has a direct design consequence, and it is the first time the platform gap has changed a
+product decision rather than a build step: **the NTAG213 ~144-byte capacity figure that was meant
+to drive Phase 3's vCard size warning cannot be obtained from iOS.** There is no `maxSize` to read.
+So Phase 3 must pick one of:
+
+1. Capacity warnings on Android only — honest, but a worse experience on the platform that has the
+   stricter session model.
+2. Derive capacity from the tag type, i.e. maintain our own UID-prefix → capacity table. Works
+   offline, but it is a hardcoded lookup that silently rots as new chips ship.
+3. Read the NTAG capability container (page 3) ourselves over a MiFare command. Correct and
+   general, but it means dropping below the NDEF abstraction into raw APDU-ish territory —
+   and that is Phase 4's native-module argument arriving on its own.
+
+Unresolved deliberately; Phase 3 decides with the Android numbers in hand.
+
+### 1.13 The cancel error that renders as nothing
+
+Second half of the gate: tap **Scan**, then **Cancel** on the system sheet. Expected a raw error
+string to write down. Got **no error at all** — the UI returned to its default state as if nothing
+had happened.
+
+That is a bug in our screen, and a good one, because the cause is a design decision in the library
+rather than a mistake in either place.
+
+The promise does reject. On cancel, CoreNFC returns the string `NFCError:200`, and the library
+parses it:
+
+```js
+// node_modules/react-native-nfc-manager/src/NfcError.js:113
+} else if (code === NfcErrorIOS.errCodes.userCancel) {
+  return new UserCancel();
+}
+```
+
+`UserCancel extends NfcErrorBase extends Error` (`NfcError.js:3,18`) and is constructed **with no
+arguments**, so `err.message` is the empty string. Our handler does the idiomatic thing:
+
+```ts
+setError(e instanceof Error ? e.message : String(e)); // → ''
+```
+
+and `''` is falsy, so `{error && <View …>}` renders nothing. The scan unwinds through `finally`,
+`scanning` goes false, and the screen looks untouched.
+
+**The lesson is about the API shape, not the empty string.** These errors carry their meaning in
+their _class_, not their message — a deliberate choice, and arguably the right one, since it makes
+`instanceof` checks the intended interface and avoids string-matching on error text. But it breaks
+the single most common error-handling reflex in JavaScript, `err.message`, and it fails _silently_:
+no crash, no log, no empty box. Every one of the 24 error classes in that file behaves this way.
+
+Phase 2 fixes it in two parts:
+
+```ts
+import { NfcError } from 'react-native-nfc-manager';
+
+if (e instanceof NfcError.UserCancel) return; // not an error; user changed their mind
+setError(e instanceof Error ? e.message || e.constructor.name : String(e));
+```
+
+The first line matters more than the second. **A user cancelling a scan is not an error condition**
+and should not paint a red box — which is exactly what our Phase 1 screen would have done had the
+message not been empty. The bug and the correct behaviour happened to coincide.
+
+Falling back to `e.constructor.name` is the general fix for the rest: `Timeout`, `TagConnectionLost`
+and `SystemBusy` are all equally nameless today and all need to say something.
+
+**A rare symmetry, worth noting because this document is mostly asymmetries.** Android reaches the
+same class by a different route — the native side returns the literal string `'cancelled'`:
+
+```js
+// node_modules/react-native-nfc-manager/src/NfcError.js:141
+export function buildNfcExceptionAndroid(error) {
+  if (error === 'cancelled') {
+    return new UserCancel();
+  }
+```
+
+So `instanceof NfcError.UserCancel` is genuinely cross-platform, even though `NFCError:200` and
+`'cancelled'` share nothing. The library's abstraction is doing real work here — one of the few
+places so far where it hides a difference instead of leaking one. Pending confirmation on hardware
+when the Android phone is available.
+
+### Phase 1 gate — status
+
+| Gate item                    | Status                                                   |
+| ---------------------------- | -------------------------------------------------------- |
+| iOS — entitlement live       | ✅ system sheet renders                                  |
+| iOS — read a real tag        | ✅ `04C4FC91DF2A81`, NDEF-formatted, empty               |
+| iOS — cancel behaviour       | ✅ observed (silent; `UserCancel` with an empty message) |
+| Android — build since rename | ⛔ no physical Android device currently available        |
+| Android — read / cancel      | ⛔ blocked on the same                                   |
+
+**iOS half of Phase 1 is closed.** The Android column throughout PLATFORM-NOTES stays ⏳ until a
+device is on hand; nothing in this project gets written down as observed until it has been.
+
+---
+
+## Phase 2 — Reading a tag properly
+
+Phase 1 proved we could get bytes off a tag. Phase 2 turns those bytes into something a person can
+read, and — unexpectedly — became the phase where we stopped trusting the library.
+
+Every line of this phase was written with **no Android device available** and only a blank NTAG213
+to hand. That constraint shaped the architecture more than any preference did.
+
+### 2.1 The decision: hand-roll the decoder
+
+`react-native-nfc-manager` bundles an `Ndef` helper with `uri.decodePayload()`,
+`text.decodePayload()` and friends. Using them is about twenty lines. Writing our own is about two
+hundred and fifty. We wrote our own, and the deciding argument was not code quality.
+
+**It is the only part of the phase that is testable without hardware.** A decoder is bytes in,
+string out — pure functions, no native modules, no device. With the Android phone unavailable,
+hand-rolling converted a blocked phase into an unblocked one. `lib/ndef.ts` therefore imports
+_nothing_ from react-native; the single import is `import type { NdefRecord }`, which is erased at
+compile time.
+
+The second argument arrived after the decision, while writing the tests, and turned out to be
+stronger: two of the library's four decoders are wrong.
+
+### 2.2 What an NDEF record actually is
+
+Worth stating plainly, because the format is much smaller than its reputation.
+
+A record has a **TNF** (Type Name Format — three bits saying how to read the type field), a
+**type**, and a **payload**. Everything else is conditional on the TNF. Two payload layouts carry
+almost all real-world traffic.
+
+A **URI** record:
+
+```
+04 65 78 61 6d 70 6c 65 2e 63 6f 6d
+│  └──────── "example.com" ────────┘
+└─ prefix index → URI_PREFIXES[0x04] = "https://"
+
+→ "https://example.com"
+```
+
+The first byte indexes a 36-entry table defined by the NFC Forum. `https://` costs **one byte**
+instead of eight. On a tag with ~144 usable bytes that is not a micro-optimisation, and it is the
+single most elegant idea in the format.
+
+A **Text** record:
+
+```
+02 65 6e 48 69
+│  └─┬─┘ └─┬─┘
+│   "en"  "Hi"
+└─ status byte:
+     bit 7    encoding  0 = UTF-8, 1 = UTF-16
+     bit 6    RFU       must be zero
+     bits 5-0 length    bytes of IANA language code that follow
+```
+
+Three fields packed into one byte, then the language code, then the text.
+
+Our decoder dispatches on TNF and produces a discriminated union rather than a bag of optional
+fields, so a screen physically cannot read `.uri` off a text record — the compiler refuses:
+
+```ts
+export type NdefView =
+  | { kind: 'empty' }
+  | { kind: 'uri'; uri: string }
+  | { kind: 'text'; text: string; lang: string; encoding: TextEncodingName }
+  | { kind: 'mime'; mime: string; text?: string; bytes: number[] }
+  | { kind: 'aar'; packageName: string }
+  | { kind: 'unknown'; tnf: number; type: string; payload: number[] };
+```
+
+`unknown` always carries `tnf`, `type` and `payload`, because a reader that silently drops records
+it does not understand is worse than one that admits it.
+
+### 2.3 Reading the dependency instead of trusting it
+
+Three defects, all found by reading `ndef-lib/` before writing anything, all confirmed with
+executable tests.
+
+**One — the Text decoder throws away the language code.**
+
+```js
+// ndef-lib/ndef-text.js
+var languageCodeLength = data[0] & 0x3f; // 6 LSBs
+// languageCode = data.slice(1, 1 + languageCodeLength),
+// utf16 = (data[0] & 0x80) !== 0; // assuming UTF-16BE
+
+// TODO need to deal with UTF in the future
+```
+
+It computes the length, uses it to skip forward, and the line that would _keep_ the language code
+is commented out. Its `decodePayload` returns a bare string, so a caller cannot recover the
+language at all. "Which language is this text in" is precisely the question a record with a
+language field exists to answer.
+
+**Two — the same function ignores the UTF-16 flag.** That `TODO` is load-bearing. A UTF-16 text
+record is decoded as UTF-8 regardless, producing interleaved NUL characters.
+
+**Three — the shared byte-to-string helper truncates above U+FFFF.**
+
+```js
+// ndef-lib/util.js
+str += String.fromCharCode(ch);
+```
+
+`String.fromCharCode` takes the low 16 bits. Verified from the CLI before writing a line of our
+own:
+
+```
+bytes    : 68 69 20 f0 9f 98 80
+expected : hi 😀
+library  : "hi " codepoints: 68 69 20 f600     ← U+F600, Private Use Area
+match    : false
+cjk lib  : "日本" (3-byte seqs are fine)
+```
+
+U+1F600 became U+F600 — an invisible Private Use Area character. Three-byte sequences (Arabic,
+CJK) are unaffected; the bug is specific to astral planes. `String.fromCodePoint` is the fix.
+
+**And its URI decoder is completely fine** — eight lines, correct, including the reserved-index
+case. That asymmetry is the interesting part: this is not a bad library, it is a library with two
+stale corners, and the only way to know which is which was to read it.
+
+### 2.4 Tests as the argument, not just the safety net
+
+`lib/ndef.test.ts` is in three groups, and the split carries the reasoning.
+
+**Correctness** — our decoder against hand-built payloads.
+
+**Agreement** — twelve real URIs encoded by _the library_ and decoded by _us_, asserted equal both
+to the original string and to the library's own output, then the same across all 36 prefix
+indices. If our table or our offset were wrong anywhere, these part company immediately. This is
+the cheap way to be confident about a lookup table you typed out by hand.
+
+**Divergence** — four _characterisation_ tests that assert the library is wrong:
+
+```
+✓ the library discards the language code; we keep it
+✓ the library truncates 4-byte UTF-8; we do not
+✓ both handle 3-byte sequences — the bug is specific to astral planes
+✓ the library ignores the UTF-16 flag; we honour it
+```
+
+Asserting that a dependency is broken looks perverse, so it is worth defending. These tests
+document _why `lib/ndef.ts` exists_, and they fail the day the library is fixed — which is exactly
+when we should reconsider hand-rolling. A comment saying "the library is buggy" rots in silence; a
+test saying it cannot. The emoji test asserts the _specific_ wrong answer
+(`codePointAt(0) === 0xf600`) rather than merely "different from ours", so it stays meaningful if
+upstream changes to a different kind of wrong.
+
+One practical note for anyone copying this pattern: the library's decoders are imported from
+`ndef-lib/*` **directly**, not through the package entry point. That subtree is dependency-free
+CommonJS, so the tests never load `NativeModules`.
+
+### 2.5 The undeclared peer dependency, for the third time
+
+`pnpm test` failed on the very first run:
+
+```
+The React Native Jest preset that jest-expo relies on has moved to a separate package.
+To migrate, please install "@react-native/jest-preset" to fulfill jest-expo's peer dependency.
+```
+
+`jest-expo` needs it; nothing _declares_ it; the installer never fetched it. This is the third
+occurrence of one pattern in this project — `@expo/log-box` (§0.4), `@expo/metro-runtime` (§0.9),
+now `@react-native/jest-preset`. Three times is a rule, not an anecdote: **in the Expo ecosystem,
+a package being required at runtime does not mean any manifest asks for it.** Fixed by pinning it
+by hand to the installed React Native version.
+
+### 2.6 A smaller trap: test globals and `tsc`
+
+`@types/jest` was installed and `tsc` still could not find `describe`. The obvious fix is
+`"types": ["jest"]` in `tsconfig.json` — and it is a trap, because that field _replaces_
+TypeScript's automatic `@types` discovery rather than adding to it. We would then have to
+enumerate `react` and `node` by hand forever, and the next missing one would fail confusingly.
+
+Test files import their globals instead:
+
+```ts
+import { describe, expect, it } from '@jest/globals';
+```
+
+Test types stay in test files and the app's namespace stays clean.
+
+### 2.7 The error mapper, and where it had to live
+
+Phase 1 (§1.13) established that every one of the library's 24 error classes is constructed with no
+arguments, so `err.message` is always `''`, so `{error && <Card/>}` renders nothing. The fix is to
+classify on the **class**.
+
+Two constraints changed the design.
+
+**It cannot live in `lib/nfc.ts`.** Importing `react-native-nfc-manager` at the package root builds
+a `NativeEventEmitter` at module load and throws outside a native runtime:
+
+```
+at new NativeEventEmitter (react-native/Libraries/EventEmitter/NativeEventEmitter.js:57)
+at Object.<anonymous> (react-native-nfc-manager/src/NativeNfcManager.js:5)
+```
+
+Anything importing it is untestable without heavy mocking. So the mapper is its own module,
+`lib/scanError.ts`, importing only `react-native-nfc-manager/src/NfcError` — which depends on
+nothing but `Platform`. Metro and Node both key their module cache on the resolved path, and the
+package's own index imports that same file, so `instanceof` still matches errors the library
+actually throws. The deep import needed a hand-written `.d.ts`, which `tsc` caught and jest did
+not: **the two checks found different problems, and the suite was green while the types were not.**
+
+**Classification uses `instanceof`; display uses hardcoded strings.** Class names are not
+guaranteed to survive minification in a release build, so `constructor.name` would quietly start
+reporting `a` instead of `UserCancel`. There is a test that mangles a class name to prove the
+developer detail survives it.
+
+Ten classes map onto eight kinds, each with a title and one actionable sentence. Everything except
+`cancelled` is flagged `provisional: true` — derived from reading source, not from watching it
+happen on a device. That flag is surfaced in the collapsed developer detail and tracked in
+PLATFORM-NOTES.
+
+And the behavioural fix that matters more than the wording:
+
+```ts
+if (isCancellation(e)) return; // a cancellation is not a failure
+```
+
+Phase 1 would have painted a red card at someone who simply changed their mind, and only avoided it
+by accident because the message was empty. The bug and the correct behaviour happened to coincide.
+
+### 2.8 Making the platform gap visible in the product
+
+The strongest finding of Phase 1 was that iOS returns two fields from `getTag()` — `{ id, tech }` —
+with no `maxSize`, so the NTAG213 capacity figure is unobtainable on that platform (§1.12).
+
+Phase 2 stops treating that as a footnote in a document and puts it on a screen. `lib/tagFacts.ts`
+models a fact with a **third state**:
+
+```ts
+type Fact = {
+  label: string;
+  value: string | null; // null = the platform did not report it
+  unavailable?: string; // why, in plain language
+  footnote?: string; // what we intend to do about it
+};
+```
+
+A UI that renders "—" for both an absent value and a zero teaches nothing. So the capacity row is
+_kept_ when empty, because its emptiness is the finding:
+
+|          | Android                                    | iOS                                                             |
+| -------- | ------------------------------------------ | --------------------------------------------------------------- |
+| Capacity | `144 bytes`                                | **Not reported**                                                |
+|          | Reported by Android's `Ndef.getMaxSize()`. | CoreNFC does not expose tag capacity.                           |
+|          |                                            | _Phase 4 reads it from the tag's capability container instead._ |
+
+Same physical chip. The reader can point at the row. This is the clearest argument yet for the
+Phase 4 native module, and it is made by the product rather than by the prose.
+
+The Android column above is **constructed from the documented API, not observed** — no Android
+device has been available since the identifier rename. The test fixture says so in a comment, and
+PLATFORM-NOTES keeps it ⏳. A green test must not quietly become evidence.
+
+One thing deliberately left out: inferring the chip type from the UID prefix (`04` = NXP). That is
+tempting and easy, and it is exactly the hardcoded lookup table that silently rots as new chips
+ship. Logged as a nice-to-have, to revisit alongside Phase 4.
+
+### 2.9 What Phase 2 shipped
+
+|                        |                                                                                         |
+| ---------------------- | --------------------------------------------------------------------------------------- |
+| `lib/ndef.ts`          | Hand-rolled decoder: TNF dispatch, URI prefix table, Text status byte, UTF-8 and UTF-16 |
+| `lib/tagFacts.ts`      | Platform-aware facts with an explicit "not reported" state                              |
+| `lib/scanError.ts`     | 10 error classes → 8 kinds, with provisional flags                                      |
+| `store/tag.ts`         | Zustand's first real use in this project; records decoded once, on write                |
+| `app/(tabs)/index.tsx` | Lean Read screen: decoded summary card, silent cancel, real error copy                  |
+| `app/tag.tsx`          | Tag Info: identity, the capacity row, per-record bytes, raw JSON                        |
+| `components/`          | `Collapsible`, `ErrorCard`                                                              |
+| Tests                  | **106**, five suites, 0.66s, zero hardware                                              |
+
+Verification: `tsc` clean, ESLint clean, Prettier clean, both platforms exporting to Hermes
+bytecode (android 3.8 MB, ios 3.6 MB). `expo-doctor` is **20/21** — the one failure is upstream
+SDK patch drift that accumulated during the hardware pause, and none of Phase 2's additions appear
+in it.
+
+**Still open, and blocked on an Android device:** every Android column in PLATFORM-NOTES, the
+`not-ndef` error shape on a genuinely unformatted tag, and confirmation that Android's cancel maps
+to `UserCancel` the way its source implies.
