@@ -4,6 +4,8 @@ import { Platform, ScrollView, Text, View } from 'react-native';
 import { Collapsible } from '../components/Collapsible';
 import { Container } from '../components/Container';
 import { Mono } from '../components/Mono';
+import { TagActions } from '../components/TagActions';
+import { guessChip } from '../lib/manufacturer';
 import { bytesToHex, describeView, kindLabel, typeToString, type NdefView } from '../lib/ndef';
 import { tagFacts, type Fact, type TargetOs } from '../lib/tagFacts';
 import { useTagStore } from '../store/tag';
@@ -39,6 +41,12 @@ export default function TagScreen() {
 
   const facts = tagFacts(tag, os);
   const records = tag.ndefMessage ?? [];
+  const chip = guessChip(tag.id);
+
+  // The first thing worth copying or opening: a URI if there is one, otherwise
+  // whatever the first record decoded to.
+  const firstUri = views.find((v) => v.kind === 'uri');
+  const copyValue = views.length ? describeView(views[0]) : undefined;
 
   return (
     <Container>
@@ -50,7 +58,26 @@ export default function TagScreen() {
             {facts.map((fact) => (
               <FactRow key={fact.label} fact={fact} />
             ))}
+
+            {chip && (
+              <View className="gap-1">
+                <View className={styles.row}>
+                  <Text className={styles.label}>Chip</Text>
+                  <Text className={styles.value}>{chip.family ?? chip.manufacturer}</Text>
+                </View>
+                <Text className={styles.unavailable}>
+                  {chip.family ? `${chip.manufacturer} · ` : ''}inferred from the UID prefix, not
+                  read from the tag
+                </Text>
+              </View>
+            )}
           </View>
+
+          <TagActions
+            value={copyValue}
+            uri={firstUri?.kind === 'uri' ? firstUri.uri : undefined}
+            raw={tag}
+          />
           {scannedAt != null && (
             <Text className={styles.timestamp}>
               Scanned at {new Date(scannedAt).toLocaleTimeString()}

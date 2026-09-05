@@ -22,8 +22,18 @@
 
 import { create } from 'zustand';
 
-import { decodeMessage, type NdefView } from '../lib/ndef';
+import { decodeMessage, summarise, type NdefView } from '../lib/ndef';
 import type { RawTag } from '../lib/tagFacts';
+
+/** How many recent scans to remember. Small on purpose — see below. */
+const HISTORY_LIMIT = 5;
+
+/** One line of scan history. Deliberately a summary, not a whole tag. */
+export type ScanRecord = {
+  id: string | undefined;
+  summary: string;
+  at: number;
+};
 
 export type TagState = {
   /** The raw tag exactly as the native side handed it over. */
@@ -33,9 +43,26 @@ export type TagState = {
   /** `Date.now()` at the moment of the read, or null if there has been none. */
   scannedAt: number | null;
 
+  /**
+   * The last few scans, newest first (N4).
+   *
+   * In memory only. Persisting this would mean choosing a storage shape now,
+   * and Phase 3 has to design storage for the user's profile anyway — two
+   * persistence patterns landing a week apart is how codebases end up with
+   * two. It also means a relaunch starts clean, which is what you want while
+   * testing on a device.
+   *
+   * Stores a *summary line*, not the tag: history is for orientation ("did I
+   * already scan this one?"), and keeping five full tag objects with their
+   * byte arrays alive for that would be a poor trade.
+   */
+  history: ScanRecord[];
+
   /** Record a successful read. Passing `null` clears, same as `clear()`. */
   setTag: (tag: RawTag | null) => void;
+  /** Clear the current tag. Leaves history alone. */
   clear: () => void;
+  clearHistory: () => void;
 };
 
 const EMPTY: Pick<TagState, 'tag' | 'views' | 'scannedAt'> = {
@@ -46,11 +73,30 @@ const EMPTY: Pick<TagState, 'tag' | 'views' | 'scannedAt'> = {
 
 export const useTagStore = create<TagState>((set) => ({
   ...EMPTY,
+  history: [],
 
   setTag: (tag) =>
-    set(tag ? { tag, views: decodeMessage(tag.ndefMessage), scannedAt: Date.now() } : { ...EMPTY }),
+    set((state) => {
+      if (!tag) return { ...EMPTY };
 
+      const views = decodeMessage(tag.ndefMessage);
+      const at = Date.now();
+
+      return {
+        tag,
+        views,
+        scannedAt: at,
+        history: [{ id: tag.id, summary: summarise(views), at }, ...state.history].slice(
+          0,
+          HISTORY_LIMIT
+        ),
+      };
+    }),
+
+  /** Clears the current tag. History survives — see `clearHistory`. */
   clear: () => set({ ...EMPTY }),
+
+  clearHistory: () => set({ history: [] }),
 }));
 
 /**

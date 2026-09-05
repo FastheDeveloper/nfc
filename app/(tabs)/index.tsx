@@ -9,14 +9,16 @@ import {
   View,
 } from 'react-native';
 
+import { AntennaHint } from '../../components/AntennaHint';
 import { Button } from '../../components/Button';
 import { Container } from '../../components/Container';
 import { DeviceBanner } from '../../components/DeviceBanner';
 import { ErrorCard } from '../../components/ErrorCard';
+import { confirmRead } from '../../lib/feedback';
 import { cancelScan, checkNfcStatus, readTagOnce, type NfcStatus } from '../../lib/nfc';
 import { summarise } from '../../lib/ndef';
 import { isCancellation, toScanError, type ScanError } from '../../lib/scanError';
-import { useTagStore } from '../../store/tag';
+import { useTagStore, type ScanRecord } from '../../store/tag';
 
 /**
  * A scan that succeeds but yields no tag object.
@@ -43,6 +45,7 @@ export default function ReadScreen() {
   const tag = useTagStore((s) => s.tag);
   const views = useTagStore((s) => s.views);
   const setTag = useTagStore((s) => s.setTag);
+  const history = useTagStore((s) => s.history);
 
   useEffect(() => {
     checkNfcStatus().then(setStatus);
@@ -62,6 +65,10 @@ export default function ReadScreen() {
       }
 
       setTag(result);
+
+      // Android draws no system UI and gives no feedback of its own, so a
+      // successful read is otherwise silent. No-ops on iOS. See lib/feedback.ts.
+      void confirmRead();
     } catch (e) {
       // A cancellation is not a failure, so nothing is rendered for it. Phase 1
       // would have painted a red card at someone who simply changed their mind,
@@ -104,6 +111,7 @@ export default function ReadScreen() {
                 ? 'Hold a tag against the back of the phone.'
                 : 'Waiting for the system NFC sheet…'}
             </Text>
+            <AntennaHint />
             {/* Android draws no system UI, so the app must offer its own way out. */}
             {Platform.OS === 'android' && <Button title="Cancel" onPress={handleCancel} />}
           </View>
@@ -129,8 +137,36 @@ export default function ReadScreen() {
             <Text className={styles.chevron}>›</Text>
           </TouchableOpacity>
         )}
+
+        {history.length > 1 && !scanning && <RecentScans history={history} />}
       </ScrollView>
     </Container>
+  );
+}
+
+/**
+ * Recent scans (N4) — in-memory only, newest first.
+ *
+ * Hidden until there is more than one, because a list of exactly the tag
+ * already shown above it is noise.
+ */
+function RecentScans({ history }: { history: ScanRecord[] }) {
+  return (
+    <View className="gap-2">
+      <Text className={styles.sectionLabel}>Recent</Text>
+      <View className={styles.historyCard}>
+        {history.map((entry) => (
+          <View key={`${entry.id ?? 'no-id'}-${entry.at}`} className={styles.historyRow}>
+            <Text className={styles.historySummary} numberOfLines={1}>
+              {entry.summary}
+            </Text>
+            <Text className={styles.historyTime}>
+              {new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -181,4 +217,11 @@ const styles = {
   summaryValue: 'text-base font-medium text-neutral-900 dark:text-neutral-100',
   summaryMeta: 'text-xs text-neutral-500 dark:text-neutral-400',
   chevron: 'text-2xl text-neutral-300 dark:text-neutral-600',
+  sectionLabel:
+    'text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500',
+  historyCard:
+    'rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 px-4 py-2',
+  historyRow: 'flex-row items-center justify-between gap-4 py-2',
+  historySummary: 'text-sm text-neutral-700 dark:text-neutral-300 flex-1',
+  historyTime: 'text-xs text-neutral-400 dark:text-neutral-500',
 };

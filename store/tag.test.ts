@@ -17,6 +17,7 @@ const WITH_URL: RawTag = {
 
 beforeEach(() => {
   useTagStore.getState().clear();
+  useTagStore.getState().clearHistory();
 });
 
 describe('initial state', () => {
@@ -100,5 +101,50 @@ describe('clear', () => {
     expect(state.views).toEqual([]);
     expect(state.scannedAt).toBeNull();
     expect(hasTag(state)).toBe(false);
+  });
+});
+
+describe('history (N4)', () => {
+  it('records each scan, newest first', () => {
+    useTagStore.getState().setTag(WITH_URL);
+    useTagStore.getState().setTag(IOS_BLANK);
+
+    const summaries = useTagStore.getState().history.map((h) => h.summary);
+    expect(summaries).toEqual(['Empty tag — no NDEF records', 'https://example.com']);
+  });
+
+  it('stores a summary line, not the whole tag', () => {
+    useTagStore.getState().setTag(WITH_URL);
+
+    const [entry] = useTagStore.getState().history;
+    expect(Object.keys(entry).sort()).toEqual(['at', 'id', 'summary']);
+  });
+
+  it('caps at five entries', () => {
+    for (let i = 0; i < 8; i += 1) useTagStore.getState().setTag(IOS_BLANK);
+
+    expect(useTagStore.getState().history).toHaveLength(5);
+  });
+
+  it('survives clear(), which only drops the current tag', () => {
+    useTagStore.getState().setTag(WITH_URL);
+    useTagStore.getState().clear();
+
+    expect(useTagStore.getState().tag).toBeNull();
+    expect(useTagStore.getState().history).toHaveLength(1);
+  });
+
+  it('is emptied only by clearHistory()', () => {
+    useTagStore.getState().setTag(WITH_URL);
+    useTagStore.getState().clearHistory();
+
+    expect(useTagStore.getState().history).toEqual([]);
+  });
+
+  it('is not touched by setTag(null)', () => {
+    useTagStore.getState().setTag(WITH_URL);
+    useTagStore.getState().setTag(null);
+
+    expect(useTagStore.getState().history).toHaveLength(1);
   });
 });

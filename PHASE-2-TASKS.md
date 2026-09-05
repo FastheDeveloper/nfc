@@ -2,7 +2,7 @@
 
 Working state, not article material. DEVLOG.md and PLATFORM-NOTES.md are the deliverables.
 
-**Status:** T0–T11 done · T12 (commit) next · T9 awaiting device confirmation · started 2026-09-05
+**Status:** T0–T13 done (T12 committed as 9787562 + 2743183) · **N1–N7 done** · next: Phase 3 · 2026-09-05
 
 Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[⛔]` blocked on hardware
 
@@ -123,7 +123,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[⛔]` blocked 
       `router.push('/tag')` will not typecheck until the file exists
 - **Test:** ✅ confirmed on device — decoded summary card and silent cancel both correct.
 
-### T9 — Tag Info route ✅ (pending device confirmation)
+### T9 — Tag Info route ✅ **confirmed on iPhone 2026-09-05**
 
 - [x] `app/tag.tsx` — Identity (facts incl. the capacity row), Records, collapsed Raw JSON
 - [x] `FactRow` renders three states, never a silent blank: value · "Not reported" + why · footnote
@@ -132,7 +132,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[⛔]` blocked 
 - [x] "No tag scanned yet" empty state for a cold open or a fast refresh
 - [x] Title set via `<Stack.Screen options>` in the route itself — expo-router file routing needs
       no registration in the root layout
-- **Test:** ⏳ **needs you** — tap the summary card, check the capacity row, then back.
+- **Test:** ✅ confirmed on device — navigation, facts and per-record detail all render.
 
 ### T10 — Verification sweep ✅
 
@@ -163,16 +163,24 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[⛔]` blocked 
 - [x] README: Phases 1 and 2 ticked; `pnpm test` added to the scripts table
 - **Test:** `pnpm lint` clean. DEVLOG 1426 lines, PLATFORM-NOTES 298.
 
-### T12 — Commit
+### T12 — Commit ✅
 
-- [ ] Phase 2 commit message (Phase 1 commits first — still uncommitted)
+- [x] `9787562` Phase 1 · `2743183` Phase 2 — both landed 2026-09-05
 
-### T13 — SDK 57 patch catch-up (deliberate, deferred)
+### T13 — SDK 57 patch catch-up ✅
 
-- [ ] `expo` 57.0.15 → ~57.0.20 and 10 siblings incl. `react-native` 0.86.2 → 0.86.3
-- [ ] Must be followed by `rm ios/Podfile.lock && cd ios && pod install` (DEVLOG §0.10)
-- **Do it after Phase 2 lands and before the Android build**, never mid-phase — `expo-doctor`
-  currently reports 1 check failed / 11 packages out of date purely because of this drift.
+- [x] `expo` 57.0.15 → ~57.0.20, `react-native` 0.86.2 → 0.86.3, 9 siblings via `expo install --fix`
+- [x] **Two hand-pins went stale and had to be chased by hand** — the maintenance cost of the
+      Phase 0/0.9 workarounds, now visible:
+      - `@react-native/jest-preset` 0.86.2 → 0.86.3 (RN moved; a *declared* peer mismatch this
+        time, because we made it a direct dependency)
+      - `@expo/log-box` ^57.0.3 → ^57.0.4 (duplicate install: ours at top level, expo's nested)
+- [x] `rm ios/Podfile.lock && pod install` — 293 pods, `ExpoModulesCore` 57.0.16 in lock matches
+      `node_modules`, zero drift
+- [x] **`expo-doctor` 21/21 — no issues detected**
+- **Test:** `tsc` clean · ESLint clean · Prettier clean · 106 tests pass · both platforms export
+  (ios 3.6 MB, android 3.8 MB) · doctor 21/21.
+- ⚠️ The iOS app on "Fas" is now **older than the native deps**. Next `expo run:ios` rebuilds it.
 
 ---
 
@@ -203,14 +211,15 @@ down as fact until it has been seen on a device.
 | Multiple reads per session    | iOS needs explicit session handling; no product need yet       |
 | Read-only locking             | Phase 5 — **permanent**, needs a named sacrificial chip        |
 
-## Nice to have — not now, decide later
+## Nice to have — ✅ all done 2026-09-05
 
-| ID  | Item                                          | Note                                              |
-| --- | --------------------------------------------- | ------------------------------------------------- |
-| N1  | Open a decoded URI in the browser (`Linking`) | Cheap and genuinely useful; strongest candidate   |
-| N2  | Copy decoded value / raw JSON to clipboard    | Helps *us* capture article data                   |
-| N3  | Haptic tick on a successful read              | iOS already gives OS feedback; Android has none — actually a platform-asymmetry beat |
-| N4  | Scan history (last N tags)                    | Wants persistence; overlaps Phase 3's storage     |
-| N5  | Android antenna-position hint illustration    | Article-friendly, pure UI                         |
-| N6  | Share raw JSON out of the app                 | Convenience for writing PLATFORM-NOTES            |
-| N7  | Infer manufacturer/chip from the UID prefix (`04` = NXP) | Considered during T4 and left out — it is option 2 from the capacity discussion, i.e. a hardcoded lookup that rots. Revisit alongside Phase 4 |
+| ID  | Item                    | Shipped as                                                             |
+| --- | ----------------------- | ---------------------------------------------------------------------- |
+| N1  | Open a decoded URI      | `components/TagActions.tsx` — guarded by `Linking.canOpenURL`          |
+| N2  | Copy to clipboard       | same, via `expo-clipboard`; button confirms then reverts after 1.5s    |
+| N3  | Haptic on success       | `lib/feedback.ts` — **Android only**; iOS's system sheet already buzzes |
+| N4  | Scan history            | `store/tag.ts` — in-memory, capped at 5, summary lines not tag objects |
+| N5  | Antenna-position hint   | `components/AntennaHint.tsx` — dot moves top vs centre by platform     |
+| N6  | Share raw JSON          | `TagActions`, via RN's built-in `Share` — no new dependency            |
+| N7  | Chip inferred from UID  | `lib/manufacturer.ts` — labelled "inferred", returns null not "Unknown" |
+
