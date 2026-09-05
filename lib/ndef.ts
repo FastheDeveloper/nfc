@@ -501,3 +501,35 @@ export function summarise(views: readonly NdefView[]): string {
   const rest = views.length - 1;
   return `${first} + ${rest} more record${rest === 1 ? '' : 's'}`;
 }
+
+/**
+ * Encode a string as UTF-8 bytes.
+ *
+ * The inverse of `bytesToUtf8`, and it lives beside it deliberately: the two
+ * are a pair, and T3 round-trips them against each other. Hand-rolled for the
+ * same reason as the decoder — `TextEncoder` is not guaranteed under Hermes.
+ */
+export function utf8ToBytes(value: string): number[] {
+  const out: number[] = [];
+
+  for (const char of value) {
+    const cp = char.codePointAt(0) ?? 0;
+
+    if (cp < 0x80) {
+      out.push(cp);
+    } else if (cp < 0x800) {
+      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
+    } else if (cp < 0x10000) {
+      out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    } else {
+      out.push(
+        0xf0 | (cp >> 18),
+        0x80 | ((cp >> 12) & 0x3f),
+        0x80 | ((cp >> 6) & 0x3f),
+        0x80 | (cp & 0x3f)
+      );
+    }
+  }
+
+  return out;
+}

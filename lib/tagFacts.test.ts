@@ -63,8 +63,10 @@ describe('tagFacts — the real iOS blank NTAG213', () => {
     const capacity = factFor(IOS_BLANK_NTAG213, 'ios', 'Capacity');
 
     expect(capacity?.value).toBeNull();
-    expect(capacity?.unavailable).toBe('CoreNFC does not expose tag capacity.');
-    expect(capacity?.footnote).toContain('Phase 4');
+    // Corrected 2026-09-05: the platform *can* report capacity, via
+    // getNdefStatus() during a session. A read simply does not carry it.
+    expect(capacity?.unavailable).toBe('A tag read does not report capacity.');
+    expect(capacity?.footnote).toContain('write');
   });
 
   it('omits the writable row entirely rather than guessing', () => {

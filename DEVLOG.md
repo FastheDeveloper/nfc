@@ -1042,6 +1042,12 @@ prettified: the raw dump is the entire object, and `type`, `techTypes` and `maxS
 classification — NTAG is NXP's MiFare Ultralight line — and is not the same thing as Android's
 `techTypes` array.
 
+> ⚠️ **Corrected in §3.1.** The paragraph below concluded that capacity is unobtainable on iOS.
+> That inference was wrong — `ndefHandler.getNdefStatus()` reports it, and a real NTAG213 answered
+> **137 bytes** on 2026-09-05. The _observation_ here (that `getTag()` returns two fields) stands;
+> the conclusion drawn from it did not. Left in place rather than edited away, because how the
+> mistake was made is the more useful part.
+
 This has a direct design consequence, and it is the first time the platform gap has changed a
 product decision rather than a build step: **the NTAG213 ~144-byte capacity figure that was meant
 to drive Phase 3's vCard size warning cannot be obtained from iOS.** There is no `maxSize` to read.
@@ -1386,11 +1392,11 @@ type Fact = {
 A UI that renders "—" for both an absent value and a zero teaches nothing. So the capacity row is
 _kept_ when empty, because its emptiness is the finding:
 
-|          | Android                                    | iOS                                                             |
-| -------- | ------------------------------------------ | --------------------------------------------------------------- |
-| Capacity | `144 bytes`                                | **Not reported**                                                |
-|          | Reported by Android's `Ndef.getMaxSize()`. | CoreNFC does not expose tag capacity.                           |
-|          |                                            | _Phase 4 reads it from the tag's capability container instead._ |
+|          | Android                     | iOS                                                                                    |
+| -------- | --------------------------- | -------------------------------------------------------------------------------------- |
+| Capacity | `144 bytes`                 | **Not reported**                                                                       |
+|          | Reported by the tag itself. | _(Corrected in §3.1: iOS reports it too, via `getNdefStatus()` — 137 bytes measured.)_ |
+|          |                             | _Phase 4 reads it from the tag's capability container instead._                        |
 
 Same physical chip. The reader can point at the row. This is the clearest argument yet for the
 Phase 4 native module, and it is made by the product rather than by the prose.
@@ -1424,3 +1430,276 @@ in it.
 **Still open, and blocked on an Android device:** every Android column in PLATFORM-NOTES, the
 `not-ndef` error shape on a genuinely unformatted tag, and confirmation that Android's cancel maps
 to `UserCancel` the way its source implies.
+
+---
+
+## Phase 3 — Writing
+
+Phase 2 made a tag readable. Phase 3 puts something on one, and it is the first phase where a
+mistake is not recoverable by re-running the code — a write replaces what was there.
+
+It is also the phase where the project's central finding turned out to be wrong.
+
+### 3.1 The correction: iOS reports capacity after all
+
+Phases 1 and 2 said, repeatedly and in three documents, that **iOS cannot report tag capacity**.
+That claim was wrong, and the shape of the error matters more than the fact.
+
+What was _observed_ (§1.12): `getTag()` on iPhone "Fas" returned exactly two fields,
+`{ id, tech }`. That remains true.
+
+What was _concluded_: that the platform therefore cannot answer the question at all, that the
+NTAG213 capacity figure is unobtainable from JavaScript on iOS, and that closing the gap requires
+a native module. **None of that follows from the observation.** One API's silence is not a
+platform limitation.
+
+The counter-evidence was in the library the whole time:
+
+```objc
+// node_modules/react-native-nfc-manager/ios/NfcManager.m:539
+[ndefTag queryNDEFStatusWithCompletionHandler:^(NFCNDEFStatus status, NSUInteger capacity, NSError *error) {
+```
+
+`ndefHandler.getNdefStatus()` calls that, and it needs an `NFCTagReaderSession` — which is exactly
+what `requestTechnology` already opens (`ios/NfcManager.m:295`). The capability was one call away
+from code we had been running since Phase 1.
+
+Confirmed on hardware, 2026-09-05, real NTAG213 on iPhone "Fas":
+
+```
+WritePreflightError: too-big
+tag reported status 2, 137 bytes
+needed 202 bytes
+```
+
+`status 2` is `ReadWrite`, so **writability is knowable on iOS too** — another thing PLATFORM-NOTES
+had recorded as Android-only.
+
+**The generalisable lesson, and the reason this is written up rather than quietly patched:** the
+project's own rule was "nothing is written down as fact until it is observed on a device". That
+rule was followed for the observation and abandoned for the inference built on top of it. An
+unverified _conclusion_ is exactly as dangerous as an unverified _measurement_, and it is harder
+to notice, because it arrives wearing the credibility of the real data underneath it.
+
+### 3.2 137, not 144 — the assumption was wrong twice
+
+The reported number was not the one we had assumed either.
+
+We had used **144 bytes**: the NTAG213's user memory, 36 pages of 4, pages 4–39. That is a real
+figure about the chip. It is simply not an answer to the question being asked. What a writer needs
+is the maximum **NDEF message**, which is smaller by the tag's own bookkeeping — and the tag says
+so directly: **137**.
+
+So the assumption was seven bytes too generous, in the dangerous direction: it would have told a
+user their card fits when it does not.
+
+Worse, the model had a second error that the first one hid. `assessCapacity` was adding the TLV
+framing to the message _and_ comparing that total against raw user memory:
+
+```
+required = message + TLV        compared against 144   ← double-counting
+```
+
+Both a reported capacity and a corrected assumption are already message sizes with the framing
+taken out. The fix is that every budget in the app now measures the same thing, and the TLV
+overhead is shown for interest rather than added:
+
+```
+required = message              compared against 137
+```
+
+The TLV itself is still worth knowing, because it explains where the bytes go:
+
+```
+03 <length> <message bytes…> FE
+│  │                          └─ Terminator TLV
+│  └─ 1 byte, or 3 (FF + 16-bit) once the message hits 255
+└─ 03 = NDEF Message
+```
+
+`NTAG213_NDEF_BYTES = 137` is now documented as **measured, not read off a datasheet**, and a test
+asserts the value so a future edit cannot quietly restore the old number.
+
+### 3.3 The bug that hid the finding
+
+The measurement was available a session earlier and we could not see it, because of a small design
+mistake worth its own paragraph.
+
+`writeNdef` queries the tag before writing, and refuses if the message will not fit. The first
+version threw the library's own error to do it:
+
+```ts
+if (queried?.capacity != null && bytes.length > queried.capacity) {
+  throw new NfcError.TagSizeTooSmall(); // wrong: indistinguishable from CoreNFC's
+}
+```
+
+So when the vCard write failed, the developer detail said `NfcError.TagSizeTooSmall` — and that is
+exactly what CoreNFC would have produced if it had rejected the write itself. **Our refusal and the
+tag's refusal were the same string**, which meant the failure could not tell us whether a capacity
+had been reported at all. The one question we were trying to answer was the one the error had
+erased.
+
+The fix is a class of our own, carrying what the tag actually said:
+
+```ts
+export class WritePreflightError extends Error {
+  constructor(
+    readonly reason: 'read-only' | 'too-big',
+    readonly reported: { status: NdefStatusValue; capacity: number | null },
+    readonly needed: number
+  ) { … }
+}
+```
+
+That is also better product behaviour. Instead of "The tag does not have room", the card now reads
+_"The tag reports 137 bytes and this needs 202. Nothing was written."_ And it is the only error in
+the app with `provisional: false` on the write path, because we watched our own code decide it
+rather than inferring the mapping from someone else's source.
+
+**Reusable rule:** never throw a dependency's error type from your own logic. It collapses "we
+refused" and "they refused" into one signal, and you will want to tell them apart precisely when
+something is going wrong.
+
+### 3.4 Asking the tag before writing to it
+
+The write is one session doing four things:
+
+```
+requestTechnology(Ndef)
+  ├─ 1. getNdefStatus()      is it writable, and how big is it really?
+  ├─ 2. refuse early         read-only, or genuinely too small
+  ├─ 3. writeNdefMessage()
+  ├─ 4. getNdefMessage()     re-encode, compare byte for byte
+  └─ cancelTechnologyRequest()
+```
+
+**One session, not four**, and that is an iOS constraint rather than a style choice: every
+`requestTechnology` puts a system sheet in front of the user, so doing this across separate
+sessions would mean four sheets and four taps for one logical action. Android would not have
+noticed the difference — the same asymmetry as §1.11, now shaping control flow rather than copy.
+
+Step 2 is the safety property. A refusal _before_ the write leaves the tag untouched; a failure
+_during_ one can leave it half-written. Ask first.
+
+Step 4 exists because a write that reports success and did not happen is the worst outcome
+available. The read-back re-encodes the records that come back and compares bytes. A mismatch is
+**reported, never thrown** — the write did succeed, and "it worked but I could not confirm it" is
+more useful than either silence or a fabricated failure.
+
+Nothing in this project calls `makeReadOnly`. Locking is permanent and stays in Phase 5.
+
+### 3.5 vCard, and three escaping mistakes in a row
+
+`lib/vcard.ts` emits vCard **3.0** — not 4.0, which is cleaner but less universally accepted;
+3.0 is what `text/vcard` means in practice and both OS importers take it without complaint.
+
+The format is from the 1990s and it shows: backslash-escaped values, semicolon-delimited
+structured fields, CRLF endings, and long lines folded with a break plus a space. Two details are
+easy to get wrong in ways nothing complains about:
+
+**Folding is measured in octets, not characters.** `line.slice(0, 75)` splits a two-byte character
+down the middle and produces invalid UTF-8. `foldLine` walks by code point tracking byte cost.
+
+**`N` is required by 3.0 and cannot be derived reliably.** Splitting a display name into
+family/given is a heuristic that is wrong for Chinese and Hungarian names, for Spanish names with
+two surnames, and for anyone with one name. We take the last token, document that it is a guess,
+and rely on `FN` — which is what importers actually display — carrying the name exactly as typed.
+
+The escaping produced three mistakes in ten minutes, all the same misunderstanding:
+
+1. **In the implementation.** `.replace(/;/g, '\;')` — and `'\;'` in a JavaScript string literal
+   is just `';'`, because an unknown escape silently drops the backslash. Semicolons were not being
+   escaped at all. Caught by re-reading before running anything.
+2. **In the test.** The expectation asserted the _unescaped_ result, so it failed against correct
+   code — the identical footgun, in the opposite direction.
+3. **In a different test.** `expect(vcard).not.toContain('N:')` — which can never pass, because
+   `BEGIN:VCARD` contains `N:`. The mirror image is the dangerous one: written as `toContain`, it
+   would have passed on every input including cards with no `N` field at all.
+
+Worth stating plainly for the article: had the test been written first, it would have "confirmed"
+the broken implementation. Test-first does not protect you when the test and the code share a
+misunderstanding — and string escaping is a domain where they usually do.
+
+### 3.6 The numbers, and what they argue
+
+Every figure below is pinned by a test, so the article's arithmetic and the app's behaviour cannot
+drift apart:
+
+|                 | Message       | Verdict on a 137-byte NTAG213 |
+| --------------- | ------------- | ----------------------------- |
+| Short URL       | **20 bytes**  | fits, 117 spare               |
+| Realistic vCard | **213 bytes** | 76 over                       |
+
+That gap is the product decision Phase 3 puts in front of the user rather than making for them:
+
+- A **URL** is tiny and universally handled — and completely dependent on something answering at
+  the other end. A domain lapses and the card is dead.
+- A **vCard** is the whole card, works with no network at all, and does not fit on the tags this
+  project bought.
+
+The Write screen shows both sizes on both segments so the comparison is visible without switching,
+and the byte breakdown makes the arithmetic checkable rather than magic.
+
+### 3.7 A correctness guard that looks like a loading spinner
+
+`store/profile.ts` is the first thing in the project that must survive a relaunch, so AsyncStorage
+finally does the job it has been installed for since Phase 0, through Zustand's `persist`
+middleware.
+
+The part worth copying is `hasHydrated`:
+
+```tsx
+if (!hasHydrated) return <Text>Loading your card…</Text>;
+```
+
+That is not a nicety. Reading AsyncStorage is asynchronous, so on the first frame the store
+legitimately holds empty defaults — and a form rendered over those writes them straight back the
+instant the user touches a field. Silent data loss, only on a cold launch, invisible in every
+dev-cycle test because the store is already warm.
+
+`partialize` also keeps the flag _out_ of storage, since persisting it would mean reading back
+`true` before hydration had happened.
+
+### 3.8 What Phase 3 shipped
+
+|                          |                                                                   |
+| ------------------------ | ----------------------------------------------------------------- |
+| `store/profile.ts`       | 7 fields, persisted, with the hydration guard                     |
+| `lib/vcard.ts`           | vCard 3.0: escaping, octet-safe folding, empty-field omission     |
+| `lib/ndefEncode.ts`      | Encoder mirroring the Phase 2 decoder; longest-prefix compression |
+| `lib/capacity.ts`        | Measured budget, reported-vs-assumed, honest copy                 |
+| `lib/writeError.ts`      | Our refusal, distinguishable from the tag's                       |
+| `lib/nfc.ts`             | `writeNdef` — query, refuse, write, verify, in one session        |
+| `app/(tabs)/profile.tsx` | Editor with a live byte counter                                   |
+| `app/(tabs)/write.tsx`   | URL/vCard choice, capacity verdict, preview, two-tap confirm      |
+| Tests                    | **215**, ten suites, no hardware                                  |
+
+`tsc`, ESLint and Prettier clean; `expo-doctor` 21/21; both platforms export to Hermes (android
+3.9 MB, ios 3.7 MB).
+
+**Verified on hardware:** a URL written to an NTAG213, read back inside the same session, read
+again on the Read tab, and opened from Tag Info. A vCard refused before writing, with the tag's own
+numbers in the refusal.
+
+**Still blocked:** everything Android. And Phase 4's motivation has been re-scoped — see below.
+
+### 3.9 What Phase 4 is for now
+
+The capacity finding removed Phase 4's newest argument, and rather than quietly keeping the phase
+on the plan, it was re-decided.
+
+**Phase 4 is about owning the native layer, not about a gap in it.** Plenty of teams cannot take a
+third-party dependency: internal-only policies, audit requirements, or simply a package they cannot
+get a fix merged into on any useful timescale. "How would I build this myself?" is a question worth
+answering on its own terms.
+
+The evidence for it is already gathered, and it is ours rather than asserted — three defects found
+by reading `react-native-nfc-manager` (§2.3: the discarded language code, the ignored UTF-16 flag,
+emoji truncated to U+F600), `index.d.ts` that is invalid TypeScript (§1.2), and a package root that
+throws outside a native runtime (§2.7). That is a concrete answer to "why would I write my own?"
+that does not depend on any platform lacking a capability.
+
+The asymmetry arguments that survive today untouched: `isNfcEnabled()` is unreachable by
+construction on iOS rather than merely unasked, there is no settings deep-link on iOS, and the
+library is a legacy bridge module running through RN's interop layer.

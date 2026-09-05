@@ -168,6 +168,39 @@ Consequence for our code: the scanning state in `app/(tabs)/index.tsx` renders a
 Android only, and different waiting copy per platform — because on iOS the user is looking at
 Apple's sheet, not our screen.
 
+### ⚠️ Corrected 2026-09-05 — capacity _is_ available on iOS
+
+This section previously concluded that iOS cannot report tag capacity. It can. The correction is
+kept visible rather than edited away, because the reasoning error is the transferable part.
+
+|                | What we observed                      | What we wrongly concluded    |
+| -------------- | ------------------------------------- | ---------------------------- |
+| iOS `getTag()` | returns `{ id, tech }` — no `maxSize` | "iOS cannot report capacity" |
+
+The capability is one call away: `ndefHandler.getNdefStatus()` → CoreNFC's `queryNDEFStatus`
+(`ios/NfcManager.m:539`) returns both a status and a capacity, inside the `NFCTagReaderSession`
+that `requestTechnology` already opens.
+
+**Observed on hardware, 2026-09-05, NTAG213 on iPhone "Fas": `status 2 (ReadWrite), 137 bytes`.**
+
+| Question | Answered by a **read** (`getTag`)  | Answered during a **write session** (`getNdefStatus`) |
+| -------- | ---------------------------------- | ----------------------------------------------------- |
+| Tag UID  | ✅                                 | —                                                     |
+| Capacity | ❌ iOS · ✅ Android (`maxSize`)    | ✅ **both**                                           |
+| Writable | ❌ iOS · ✅ Android (`isWritable`) | ✅ **both** (`status`)                                |
+
+So the real asymmetry is narrower and more interesting than "iOS tells you less": **Android
+volunteers this information with an ordinary read, while iOS requires you to ask a specific
+question inside a session.** Same data, different price of admission.
+
+Two further corrections that fell out of the measurement:
+
+- **137, not 144.** We had assumed the NTAG213's raw _user memory_. The number that matters is the
+  maximum NDEF _message_, smaller by the tag's own bookkeeping — so the assumption was seven bytes
+  too generous, in the direction that tells a user their card fits when it does not.
+- The capacity model had been adding TLV framing to the message _and_ comparing against user
+  memory. Double-counting. Every budget in play is already a message size.
+
 ### What `getTag()` actually returns
 
 **Observed 2026-09-05** — same physical NTAG213, read on iOS. The Android column stays ⏳ until
@@ -189,6 +222,9 @@ The full iOS payload is two keys:
 ```
 
 These are not nulls being rendered as `(none)` — the keys do not exist on the object.
+
+> ⚠️ **Superseded** — see the correction at the top of this section. Capacity is available on
+> iOS via `getNdefStatus()`, and the real figure is 137, not 144.
 
 **This is the first platform gap in the project to change a product decision rather than a
 build step.** The NTAG213 ~144-byte capacity figure that was meant to drive Phase 3's vCard

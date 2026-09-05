@@ -58,11 +58,22 @@ export type TagState = {
    */
   history: ScanRecord[];
 
+  /**
+   * The last capacity a tag reported about itself, in bytes.
+   *
+   * Only learnable inside an open session, via `ndefHandler.getNdefStatus()` —
+   * never from `getTag()`, which is why Phase 1 and 2 concluded (wrongly) that
+   * iOS could not report it at all. Kept here so the Write screen can stop
+   * saying "assuming" once a real number has been seen.
+   */
+  reportedCapacity: number | null;
+
   /** Record a successful read. Passing `null` clears, same as `clear()`. */
   setTag: (tag: RawTag | null) => void;
   /** Clear the current tag. Leaves history alone. */
   clear: () => void;
   clearHistory: () => void;
+  setReportedCapacity: (bytes: number | null) => void;
 };
 
 const EMPTY: Pick<TagState, 'tag' | 'views' | 'scannedAt'> = {
@@ -74,6 +85,7 @@ const EMPTY: Pick<TagState, 'tag' | 'views' | 'scannedAt'> = {
 export const useTagStore = create<TagState>((set) => ({
   ...EMPTY,
   history: [],
+  reportedCapacity: null,
 
   setTag: (tag) =>
     set((state) => {
@@ -97,6 +109,8 @@ export const useTagStore = create<TagState>((set) => ({
   clear: () => set({ ...EMPTY }),
 
   clearHistory: () => set({ history: [] }),
+
+  setReportedCapacity: (bytes) => set({ reportedCapacity: bytes }),
 }));
 
 /**

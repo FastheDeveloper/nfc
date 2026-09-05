@@ -26,6 +26,8 @@
 
 import * as NfcError from 'react-native-nfc-manager/src/NfcError';
 
+import { WritePreflightError } from './writeError';
+
 export type ScanErrorKind =
   | 'cancelled'
   | 'not-ndef'
@@ -34,6 +36,10 @@ export type ScanErrorKind =
   | 'system-busy'
   | 'nfc-off'
   | 'unsupported'
+  // Write-side kinds. Phase 3.
+  | 'read-only'
+  | 'too-big-for-tag'
+  | 'write-failed'
   | 'unknown';
 
 export type ScanError = {
@@ -131,6 +137,34 @@ const MAPPINGS: {
     detail: 'This device cannot read this kind of tag.',
   },
   {
+    type: NfcError.TagNotWritable,
+    className: 'NfcError.TagNotWritable',
+    kind: 'read-only',
+    title: 'This tag is locked',
+    detail: 'It has been made permanently read-only and cannot be changed.',
+  },
+  {
+    type: NfcError.TagSizeTooSmall,
+    className: 'NfcError.TagSizeTooSmall',
+    kind: 'too-big-for-tag',
+    title: 'Too big for this tag',
+    detail: 'The tag does not have room. Shorten your card, or write a link instead.',
+  },
+  {
+    type: NfcError.TagUpdateFailure,
+    className: 'NfcError.TagUpdateFailure',
+    kind: 'write-failed',
+    title: 'The write did not complete',
+    detail: 'The tag may be partly written. Hold it steady and try again.',
+  },
+  {
+    type: NfcError.ZeroLengthMessage,
+    className: 'NfcError.ZeroLengthMessage',
+    kind: 'write-failed',
+    title: 'Nothing to write',
+    detail: 'The message was empty.',
+  },
+  {
     type: NfcError.FirstNdefInvalid,
     className: 'NfcError.FirstNdefInvalid',
     kind: 'not-ndef',
@@ -152,6 +186,31 @@ const NOT_NDEF_HINTS = ['ndef', 'tech', 'technology', 'not supported'];
 
 /** Everything we know how to say about a thrown value. */
 export function toScanError(error: unknown): ScanError {
+  // Ours first. This one is checked before the library's classes because it is
+  // the only error in the app that carries measured numbers, and because
+  // `provisional` is genuinely false for it — we watched our own code decide.
+  if (error instanceof WritePreflightError) {
+    const { reason, reported, needed } = error;
+    const capacity =
+      reported.capacity != null ? `${reported.capacity} bytes` : 'no capacity (it did not say)';
+
+    return reason === 'read-only'
+      ? {
+          kind: 'read-only',
+          title: 'This tag is locked',
+          detail: 'The tag reports itself as read-only, so nothing was written.',
+          developer: `WritePreflightError: read-only\ntag reported status ${reported.status}, ${capacity}\nnothing was sent`,
+          provisional: false,
+        }
+      : {
+          kind: 'too-big-for-tag',
+          title: 'Too big for this tag',
+          detail: `The tag reports ${capacity} and this needs ${needed}. Nothing was written — shorten your card, or write a link instead.`,
+          developer: `WritePreflightError: too-big\ntag reported status ${reported.status}, ${capacity}\nneeded ${needed} bytes\nrefused before writing — the tag is untouched`,
+          provisional: false,
+        };
+  }
+
   for (const mapping of MAPPINGS) {
     if (error instanceof mapping.type) {
       return {

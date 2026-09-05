@@ -129,23 +129,25 @@ function technologyFact(tag: RawTag, os: TargetOs): Fact {
 }
 
 /**
- * The capacity row — the one that made the Phase 4 argument concrete.
+ * The capacity row.
  *
- * Android's `Ndef` class exposes `getMaxSize()`, so we get a real number.
- * CoreNFC has no equivalent: the tag object iOS returns has no size field at
- * all, so the ~144 usable bytes of an NTAG213 are simply unknowable from
- * JavaScript on that platform.
+ * **Corrected 2026-09-05.** This row used to claim CoreNFC cannot report
+ * capacity. It can — `ndefHandler.getNdefStatus()` returns it, and a real
+ * NTAG213 answered 137 bytes. What is true is narrower: a *read* does not
+ * carry it. `getTag()` returns `{ id, tech }` and nothing more, so on this
+ * screen — which shows the result of a read — there genuinely is no number.
  *
- * That is not a gap we can close with better JavaScript. Reading it means
- * talking to the tag's capability container directly, which is what the Phase 4
- * native module is for — so the row says so instead of rendering a shrug.
+ * The distinction matters and the copy now makes it: the capacity is missing
+ * because of *which call was made*, not because the platform cannot answer.
+ * Saying "iOS cannot do this" when the truth is "we did not ask" is the kind
+ * of claim this project exists to avoid.
  */
 function capacityFact(tag: RawTag, os: TargetOs): Fact {
   if (typeof tag.maxSize === 'number') {
     return {
       label: 'Capacity',
       value: `${tag.maxSize} bytes`,
-      footnote: 'Reported by Android’s Ndef.getMaxSize().',
+      footnote: 'Reported by the tag itself.',
     };
   }
 
@@ -153,8 +155,8 @@ function capacityFact(tag: RawTag, os: TargetOs): Fact {
     return {
       label: 'Capacity',
       value: null,
-      unavailable: 'CoreNFC does not expose tag capacity.',
-      footnote: 'Phase 4 reads it from the tag’s capability container instead.',
+      unavailable: 'A tag read does not report capacity.',
+      footnote: 'Tags state their real size during a write — see the Write tab.',
     };
   }
 

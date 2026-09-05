@@ -61,6 +61,6 @@ forced on us by NFC rather than chosen.
 - [x] **Phase 0** — scaffold, SDK 57, hello screen on both devices
 - [x] **Phase 1** — NFC plumbing, entitlements, raw NDEF read
 - [x] **Phase 2** — Read & Tag Info screens, full NDEF parsing
-- [ ] **Phase 3** — Profile editor, vCard + URL writing, capacity checks
-- [ ] **Phase 4** — `nfc-capabilities`, our own Expo Module in Kotlin + Swift
+- [x] **Phase 3** — Profile editor, vCard + URL writing, capacity checks
+- [ ] **Phase 4** — our own Expo Module in Kotlin + Swift: owning the native layer
 - [ ] **Phase 5** — read-only locking, EAS comparison, article prep
