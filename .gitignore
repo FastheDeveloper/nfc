@@ -13,8 +13,12 @@ web-build/
 expo-env.d.ts
 
 
-ios
-android
+# Anchored with a leading slash so these match ONLY the top-level CNG
+# directories. Bare `ios` / `android` match at any depth, which silently
+# excluded modules/nfc-native/{ios,android} — i.e. every line of hand-written
+# Swift and Kotlin in Phase 4. Caught by expo-doctor, not by git.
+/ios
+/android
 
 # macOS
 .DS_Store

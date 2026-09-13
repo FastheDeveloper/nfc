@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["NfcNativeModule"]
+  },
+  "android": {
+    "modules": ["com.nfccard.tap.nfcnative.NfcNativeModule"]
+  }
+}

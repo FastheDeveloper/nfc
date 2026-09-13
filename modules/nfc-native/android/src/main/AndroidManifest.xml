@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!--
+    Declared by the module itself rather than by the app.
+
+    Manifests merge, so a module that needs a permission should ask for it —
+    that way the permission travels with the code that requires it and does not
+    quietly disappear when `react-native-nfc-manager` and its config plugin are
+    removed in T10.
+  -->
+  <uses-permission android:name="android.permission.NFC" />
+</manifest>

@@ -14,6 +14,7 @@ import { Button } from '../../components/Button';
 import { Container } from '../../components/Container';
 import { DeviceBanner } from '../../components/DeviceBanner';
 import { ErrorCard } from '../../components/ErrorCard';
+import { NativeCapabilities } from '../../components/NativeCapabilities';
 import { confirmRead } from '../../lib/feedback';
 import { cancelScan, checkNfcStatus, readTagOnce, type NfcStatus } from '../../lib/nfc';
 import { summarise } from '../../lib/ndef';
@@ -100,6 +101,10 @@ export default function ReadScreen() {
 
         <DeviceBanner />
         <NfcStatusCard status={status} />
+        {/* Phase 4: our module answering the same questions as the library,
+            so any disagreement shows up immediately. Removed with the
+            dependency in T10. */}
+        <NativeCapabilities />
 
         {status.kind === 'ready' && !scanning && <Button title="Scan a tag" onPress={handleScan} />}
 
