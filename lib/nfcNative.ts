@@ -7,10 +7,10 @@
  * than merely plausible.
  */
 
-import type { NdefRecord } from 'react-native-nfc-manager';
+import type { NdefRecord } from './nfcTypes';
 
 import NfcNative from '../modules/nfc-native/src/NfcNativeModule';
-import type { NativeTagResult } from '../modules/nfc-native/src/NfcNative.types';
+import type { NativeTagResult, NativeWriteResult } from '../modules/nfc-native/src/NfcNative.types';
 import { describeNativeError } from './nativeError';
 import type { RawTag } from './tagFacts';
 
@@ -56,4 +56,37 @@ export async function readTagNative(
  */
 export function isNativeCancellation(error: unknown): boolean {
   return describeNativeError(error).code === 'UserCancelledException';
+}
+
+export type NativeWriteOutcome = {
+  /** The tag's own capacity, learned before anything was written. */
+  capacity: number | null;
+  status: NativeTagResult['status'];
+  written: number;
+  verified: boolean;
+  /** Why verification failed, when it did. Null on success. */
+  verifyNote: string | null;
+};
+
+/**
+ * Write through our own Swift, shaped like `writeNdef` in `lib/nfc.ts`.
+ *
+ * Same contract as the library path, so T9 can swap them behind a flag and the
+ * Write screen cannot tell the difference.
+ */
+export async function writeTagNative(
+  bytes: number[],
+  alertMessage = 'Hold your iPhone near the tag to write it.'
+): Promise<NativeWriteOutcome> {
+  const result: NativeWriteResult = await NfcNative.writeTag(alertMessage, bytes);
+
+  return {
+    capacity: result.capacity > 0 ? result.capacity : null,
+    status: result.status,
+    written: result.written,
+    verified: result.verified,
+    verifyNote: result.verified
+      ? null
+      : `The tag read back ${result.readBack.length} record(s) that did not match what was sent.`,
+  };
 }

@@ -39,3 +39,24 @@ export type NativeTagResult = {
 };
 
 export type NfcNativeModuleEvents = Record<never, never>;
+
+/** What a write session learned and did. */
+export type NativeWriteResult = {
+  id: string;
+  tech: string;
+  status: NativeNdefStatus;
+  /** The tag's own capacity, reported before anything was written. */
+  capacity: number;
+  /** Bytes handed to the tag. */
+  written: number;
+  /**
+   * Did a read-back inside the same session return the same records?
+   *
+   * Compared by record content, not raw bytes: a tag may legally return a
+   * message whose framing differs from what we sent while carrying identical
+   * data. What matters is that the content survived.
+   */
+  verified: boolean;
+  /** What the tag actually held afterwards. */
+  readBack: NativeNdefRecord[];
+};

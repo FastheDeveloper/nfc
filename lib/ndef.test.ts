@@ -36,10 +36,11 @@ import {
 } from './ndef';
 
 /**
- * The library's decoders, imported at their source rather than through the
- * package entry point. `ndef-lib/*` is dependency-free CommonJS, so requiring
- * it directly keeps these tests clear of `NativeModules` and the whole React
- * Native runtime.
+ * The library's decoders — now a **vendored copy**, since the package itself
+ * was removed in Phase 4 T10. See `vendor/react-native-nfc-manager/README.md`
+ * for why a deleted dependency is still in the repository: these tests are the
+ * executable evidence for why `lib/ndef.ts` was written by hand, and they would
+ * have evaporated along with the package.
  *
  * Note the signature mismatch while we are here: `index.d.ts` declares
  * `decodePayload(data: Uint8Array)`, but the implementation indexes and slices,
@@ -49,8 +50,8 @@ import {
 type Decoder = { decodePayload: (data: number[]) => string };
 type Encoder = { encodePayload: (value: string) => number[] };
 /* eslint-disable @typescript-eslint/no-require-imports */
-const libUri: Decoder & Encoder = require('react-native-nfc-manager/ndef-lib/ndef-uri');
-const libText: Decoder = require('react-native-nfc-manager/ndef-lib/ndef-text');
+const libUri: Decoder & Encoder = require('../vendor/react-native-nfc-manager/ndef-lib/ndef-uri');
+const libText: Decoder = require('../vendor/react-native-nfc-manager/ndef-lib/ndef-text');
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 /** UTF-8 encode, for building payloads by hand. */

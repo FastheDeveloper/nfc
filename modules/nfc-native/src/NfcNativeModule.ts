@@ -1,6 +1,6 @@
 import { NativeModule, requireNativeModule } from 'expo';
 
-import type { NativeTagResult } from './NfcNative.types';
+import type { NativeTagResult, NativeWriteResult } from './NfcNative.types';
 
 /**
  * The raw bridge surface.
@@ -37,6 +37,19 @@ declare class NfcNativeModule extends NativeModule<Record<never, never>> {
    * `TimeoutException`, `NotNdefException`, and others in `NfcExceptions.swift`.
    */
   readTag(alertMessage: string): Promise<NativeTagResult>;
+
+  /**
+   * Write an NDEF message, then verify it inside the same session.
+   *
+   * One session, not two: on iOS each one puts a system sheet in front of the
+   * user, so writing and verifying separately would mean two sheets and two
+   * taps for one action.
+   *
+   * Rejects with `TagReadOnlyException`, `TagTooSmallException` (our own
+   * refusal, carrying the tag's numbers — never CoreNFC's error),
+   * `InvalidMessageException`, or `WriteFailedException`.
+   */
+  writeTag(alertMessage: string, bytes: number[]): Promise<NativeWriteResult>;
 }
 
 export default requireNativeModule<NfcNativeModule>('NfcNative');

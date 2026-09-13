@@ -17,7 +17,7 @@
  * device.
  */
 
-import type { TagEvent } from 'react-native-nfc-manager';
+import type { TagEvent } from './nfcTypes';
 
 /**
  * What the native side actually hands back.

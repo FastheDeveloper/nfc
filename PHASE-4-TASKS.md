@@ -2,7 +2,7 @@
 
 Working state, not article material. DEVLOG.md and PLATFORM-NOTES.md are the deliverables.
 
-**Status:** T0–T1 confirmed · T2 built, building for device · started 2026-09-05
+**Status:** ✅ **Phase 4 complete on iOS** — T0–T2, T4, T5, T7–T11 all confirmed on device. T3/T6 deferred to an Android device. T12 (commit) handed over. 2026-09-13
 
 Legend: `[ ]` not started · `[x]` done · `[⛔]` blocked on hardware
 
@@ -122,7 +122,7 @@ plumbing, it just changes which layer surprises you.**
       shape `lib/ndef.ts` already decodes. **The parser is untouched by this phase**
 - [x] `lib/nfcNative.ts` returns a `RawTag`, so the store, decoder and Tag Info cannot tell which
       implementation produced it — that is what makes T9's swap provable rather than plausible
-- **Test:** ⏳ **needs you** — "Read a tag with our module" on the violet card.
+- **Test:** ✅ **confirmed on iPhone 2026-09-13** — native read returns the tag, its status and its real capacity.
 
 ### T2a — Adding a Swift file needs `pod install`
 
@@ -133,59 +133,175 @@ after the last `pod install` are not in the Xcode target at all.
 Adding a *function* to an existing file needs only a rebuild. Adding a *file* needs
 `pod install` first. The error says nothing about either.
 
-### T3 — Android read (Kotlin)
+### T3 — Android read (Kotlin) ⛔ **DEFERRED 2026-09-13**
+
+Fas: *"we will do android later."* No device, and writing Kotlin we cannot run would produce
+unverifiable claims — exactly what this project refuses to do. Picked up when a device appears.
 
 - [ ] `NfcAdapter.enableReaderMode`, `Ndef.get(tag)`, foreground lifecycle
-- **Test:** ⛔ compile only
+- **Test:** ⛔ blocked on H9
 
-### T4 — Status and capacity
+### T4 — Status and capacity ✅ **iOS done, via T2**
 
-- [ ] iOS `queryNDEFStatus` → `{ status, capacity }`; Android `Ndef.getMaxSize()` / `isWritable`
-- **Test:** must report **137** for our NTAG213s, matching DEVLOG §3.1
+Folded into the read session rather than built separately — `queryNDEFStatus` has to run inside the
+same session anyway, so a second entry point would have meant a second system sheet.
 
-### T5 — Write
+- [x] iOS: `{ status, capacity }` returned by `readTag`, confirmed on device
+- [ ] Android: `Ndef.getMaxSize()` / `isWritable` — ⛔ with T3
 
-- [ ] `writeNdefMessage(bytes)` on both platforms, inside the existing session
-- **Test:** write a URL, read it back, compare bytes
+### T5 — Write ✅ **confirmed on iPhone 2026-09-13**
+
+- [x] `NfcWriteSession.swift` (224 lines) — connect → `queryNDEFStatus` → refuse early → `writeNDEF`
+      → read back → invalidate, all in one session
+- [x] **Refuses with our own exception type**, carrying the tag's numbers — never CoreNFC's, so
+      "we refused" and "the tag refused" stay distinguishable (the §3.3 lesson, at the native layer)
+- [x] `NFCNDEFMessage(data:)` parses our bytes **before a tag is involved**, so a malformed message
+      fails early and harmlessly — a free check on our own encoder
+- [x] Verification compares **record content, not raw bytes**: a tag may legally return different
+      framing (short vs long record form) carrying identical data
+- [x] Extracted `NfcTagInfo.swift` (tag → bridge conversions) and `NfcReaderErrors` (CoreNFC code
+      translation), shared by both sessions — a read and a write disagreeing about what a UID *is*
+      would be a horrible bug to chase
+- [x] 4 new typed exceptions: read-only, too-small, invalid-message, write-failed
+- **Test:** ✅ our encoder → our Swift writer → verified read-back → **and the library's reader
+  agrees**. Real parity evidence ahead of T8.
+
+### T6 — Format ⛔ **DEFERRED 2026-09-13**
+
+Not built, and not a stub. Android's `NdefFormatable` is behind H9, and **iOS exposes no formatting
+API at all** — `writeNDEF` simply fails on a non-NDEF tag. Writing a half-path for one platform we
+cannot test and one that cannot do it would produce exactly the unverifiable claim this project
+refuses to make. Revisit with an Android device and an unformatted tag (H10).
 
 ### T6 — Format
 
 - [ ] `NdefFormatable` on Android; on iOS establish and document what is actually possible
 - **Test:** ⛔ needs an unformatted tag (H1)
 
-### T7 — TypeScript API and typed errors
+### T7 — TypeScript API and typed errors ✅
 
-- [ ] One typed surface mirroring what `lib/nfc.ts` exposes today
-- [ ] Errors carry a **code and a message**, unlike the library's empty-message classes (§1.13)
-- **Test:** `pnpm test` — the mapper's tests point at ours
+- [x] `toScanError()` now handles **both** implementations — the library's classes and our module's
+      codes — producing the same `ScanError` either way. That is what lets T9 swap them without
+      touching a single screen
+- [x] Matching on a **code**, not a class: these errors cross the bridge as values, so there is no
+      `instanceof` on the far side, and Expo wraps them so the code must be dug out of the cause
+      chain first
+- [x] Prefers the **native message** when there is one — `TagTooSmallException` carries the tag's
+      real numbers, which beats any generic sentence we could write
+- [x] `isCancellation()` recognises both, so a cancel is silent regardless of implementation
+- [x] `provisional: false` only for the three native mappings actually observed on hardware
+- **Test:** `pnpm test` → **244 passed**, 11 suites. 21 new tests, incl. proof that a cancel from
+  either implementation produces an identical result.
 
-### T8 — Parity harness
+### T8 — Parity harness ✅ (pending device check)
 
-- [ ] Run both implementations against the same tag and diff the results
-- [ ] Any divergence is a finding, recorded either way
-- **Test:** on hardware, iOS
+- [x] `lib/parity.ts` — pure comparison, so the logic tests in Node and only the scanning needs a
+      device
+- [x] **"Different" is not one outcome.** Five statuses: `same`, `differs`, `native-only`,
+      `library-only`, `neither`. Our read reports capacity and writability that the library's read
+      does not — that is our module knowing *more*, and scoring it as a mismatch would be
+      actively misleading
+- [x] `library-only` blocks the swap too: losing information is a real problem even though it is
+      not a contradiction
+- [x] UID comparison normalises case and separators — those are not differences
+- [x] Records compared by **decoded meaning**, not raw bytes
+- [x] `app/parity.tsx` — two sequential scans (one CoreNFC session per app), which also proves the
+      agreement survives being read at different moments rather than once
+- [x] Both scan paths use the **same** `isCancellation` and `toScanError` — T7 doing its job on
+      errors from two unrelated implementations
+- [x] `lib/parity.test.ts` — 12 tests, incl. the expected real-world case and each failure mode
+- **Test:** ✅ **confirmed on iPhone 2026-09-13** — **0 conflicts, 4 fields agreed, 2 reported only
+  by our module** (capacity and writable). Exactly the predicted shape: no contradiction anywhere,
+  and the only differences are ours knowing more. This is the evidence T9 needed.
 
-### T9 — Switch the app over
+### T9 — Switch the app over ✅ (pending device regression)
 
-- [ ] One flag flips `lib/nfc.ts` between implementations
-- [ ] Full regression: read, Tag Info, write, verify, capacity, errors, cancel
-- **Test:** the whole app on hardware
+- [x] `lib/nfcBackend.ts` — the single place the app chooses. **`BACKEND = 'native'`**
+- [x] Every screen imports from it; **no screen imports a backend directly** any more. `parity.tsx`
+      deliberately still imports both — comparing them is its job
+- [x] `startNfc()` is a **no-op** on the native backend rather than a shim pretending to
+      initialise: our sessions are self-contained, the library's needed `NfcManager.start()`
+- [x] `checkNfcStatus()` on native routes through our module, and `disabled` is unreachable on iOS
+      **by construction** (`enabledIsMeaningful`), not merely unlikely
+- [x] The Read screen now records a **real capacity on every read** — the Write screen stops
+      assuming without needing a write first. The most visible gain from the swap
+- [x] A "NFC backend: native" line on the Read tab, so it is never a guess which is live
+- [x] ⚠️ `cancelScan()` is a **knowing no-op** on native. iOS cancels via the system sheet, which
+      our session handles. **Android is the gap** — it draws no system UI and our module has no
+      cancel entry point yet. Lands with T3; documented in the code so it is not found as a mystery
+- **Test:** 7 of 8 passed first time. Test 3 (cancel) failed — see T9a.
 
-### T10 — Remove the dependency
+### T9a — ⚠️ Expo's error code is **not** your class name
 
-- [ ] Delete `react-native-nfc-manager`; keep the divergence tests by pointing them at a vendored
-      copy of the two decoders, so §2.3's evidence does not evaporate
-- **Test:** `pnpm test`, `expo-doctor`, full app on device
+Found by the device regression, not by 272 tests: cancelling a scan on the native backend rendered
+a red *"Could not read the tag"* card instead of nothing.
 
-### T11 — Documentation
+- [x] **Cause.** `expo-modules-core/ios/Core/Exceptions/CodedError.swift:45` derives the code from
+      the class name — strip the trailing `Exception`, split camelCase, upper-case, prefix `ERR_`.
+      So `UserCancelledException` arrives in JavaScript as **`ERR_USER_CANCELLED`**.
+      `describeNativeError()` prefers that code, the mapping table was keyed on the class name, the
+      lookup missed, and everything fell through to the generic "unknown" card.
+- [x] **Why it hid.** T1a only ever used the *message*, which was extracted correctly all along.
+      Nothing depended on the **code** until T7 built a table on it — and every T7 test used a
+      handcrafted fixture with no `code` property, so they all passed against a fixture that did
+      not match reality.
+- [x] **Fix.** `describeNativeError()` now returns `className` (from the cause chain) *and* `code`
+      (Expo's) separately. `expoCodeFor()` reproduces Expo's algorithm, so the table stays keyed on
+      the Swift class names we actually wrote and the `ERR_` forms are **derived** from them —
+      one source of truth rather than two lists that drift.
+- [x] `isCancellation()` matches both forms.
+- [x] 16 new tests, including the **verbatim device error** as a fixture.
 
-- [ ] DEVLOG §4.x — the module anatomy, bridging, threading, what the library was hiding
-- [ ] PLATFORM-NOTES — native-side asymmetries seen from the inside this time
-- [ ] README — tick Phase 4
+**The transferable lesson:** a test fixture you invented can only prove your code is
+self-consistent. Both the code and its tests shared one wrong assumption, so 272 green tests said
+nothing about it — it took a thumb on a Cancel button.
+
+### T10 — Remove the dependency ✅ (pending final device pass)
+
+**`react-native-nfc-manager` is no longer a dependency.** The app runs entirely on
+`modules/nfc-native`.
+
+The riskiest part was not code. The library's **config plugin** was generating the iOS NFC
+entitlement and `NFCReaderUsageDescription` — remove the package and the app loses NFC with no
+error at all. So that came first: declared explicitly as `ios.entitlements` and `ios.infoPlist` in
+`app.json`, prebuilt, and verified **byte-identical** to what the plugin produced *before* anything
+was deleted.
+
+- [x] `app.json` owns the entitlement and usage string; plugin removed
+- [x] `lib/nfcTypes.ts` — we own `NdefRecord` / `TagEvent` now, with a correction: `ndefMessage` is
+      **optional**, because a blank tag on iOS returns no such key (§1.12). The library's own type
+      was wrong about its own data
+- [x] **`vendor/react-native-nfc-manager/`** — the two broken decoders and the error classes, kept
+      as *evidence*, MIT licence included, with a README explaining why a deleted dependency is
+      still in the repo and why it must never be "fixed"
+- [x] `lib/vendorEvidence.test.ts` — §1.13 and §2.3 as executable assertions. Delete the vendored
+      copy and the argument for Phase 4 becomes a claim in a document instead of something a reader
+      can run
+- [x] ESLint and Prettier both ignore `vendor/` — the code is 1990s-era `var`, and reformatting it
+      would destroy the diff against upstream
+- [x] Deleted: `lib/nfc.ts`, `lib/writeError.ts`, `lib/parity.ts`, `app/parity.tsx`,
+      `components/NativeCapabilities.tsx`, `types/react-native-nfc-manager-internal.d.ts`
+- [x] **`lib/writeError.ts` turned out to be dead code** — the JS pre-flight moved into Swift in
+      T5, and capacity now arrives on *every read* rather than only via a refusal. A simplification
+      the swap paid for
+- [x] The `expo-doctor` New-Architecture exclusion is gone: the package it excluded no longer exists
+- [x] `pod install` reported `Removing react-native-nfc-manager`; 113 pods, down from 114
+- **Test:** ✅ **all 8 steps passed on iPhone 2026-09-13** — read, capacity 137, silent cancel, reported capacity, write, read-back, vCard refusal, profile intact. The app runs entirely on our own native module.
+
+### T11 — Documentation ✅
+
+- [x] DEVLOG **§4.1–4.10** (~250 lines): the motivation that did not survive hardware and how it was
+      re-decided; what CoreNFC actually requires (settle once, retain the session); the FeliCa
+      entitlement trap; **Expo's code derivation and why 272 tests missed it**; parity as evidence;
+      config plugins as the hidden half of a dependency; and what the swap actually bought
+- [x] PLATFORM-NOTES **§8** — the platforms seen from inside the native layer rather than through a
+      library's choices: session shape, **entitlements gated per polling option**, capacity and
+      writability settled, and our errors vs theirs
+- [x] README — Phase 4 ticked; the stack line now says **no third-party NFC dependency**
 
 ### T12 — Commit
 
-- [ ] Message handed over (never run by me)
+- [x] Message handed over 2026-09-13
 
 ---
 

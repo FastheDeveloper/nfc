@@ -5,7 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { startNfc } from '../lib/nfc';
+import { startNfc } from '../lib/nfcBackend';
 
 export const unstable_settings = {
   initialRouteName: '(tabs)',

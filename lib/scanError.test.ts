@@ -1,140 +1,132 @@
 import { describe, expect, it } from '@jest/globals';
-import * as NfcError from 'react-native-nfc-manager/src/NfcError';
 
 import { isCancellation, toScanError } from './scanError';
 
-describe('the bug this module exists to fix', () => {
-  /**
-   * The Phase 1 screen did `setError(e.message)`. This is why nothing appeared.
-   */
-  it('every library error has an empty message', () => {
-    const classes = [
-      NfcError.UserCancel,
-      NfcError.Timeout,
-      NfcError.TagConnectionLost,
-      NfcError.SystemBusy,
-      NfcError.RadioDisabled,
-    ];
+/**
+ * `react-native-nfc-manager` was removed in T10, and with it the tests that
+ * mapped its error classes. What those tests *proved* — that every one of them
+ * carries an empty message — survives in `lib/vendorEvidence.test.ts`, running
+ * against the vendored copy.
+ *
+ * What remains here is the surface the app actually uses: our own module's
+ * exceptions, and the pre-flight refusal we raise ourselves.
+ */
 
-    for (const Cls of classes) {
-      expect(new Cls().message).toBe('');
-    }
-  });
+// ---------------------------------------------------------------------------
+// Our own native module (Phase 4)
+// ---------------------------------------------------------------------------
 
-  it('so every mapped error still produces a title and a detail', () => {
-    const mapped = toScanError(new NfcError.Timeout());
+/**
+ * Errors from our Swift arrive as Expo-wrapped values, not class instances —
+ * there is no `instanceof` across the bridge. These fixtures reproduce the
+ * exact shape observed on iPhone "Fas" (§T1a).
+ */
+const wrapped = (code: string, message: string) =>
+  new Error(`Calling the 'readTag' function has failed → Caused by: ${code}: ${message}`);
 
-    expect(mapped.title).toBeTruthy();
-    expect(mapped.detail).toBeTruthy();
-  });
-});
-
-describe('cancellation', () => {
-  it('is recognised', () => {
-    expect(isCancellation(new NfcError.UserCancel())).toBe(true);
-  });
-
-  it('is not confused with other failures', () => {
-    expect(isCancellation(new NfcError.Timeout())).toBe(false);
-    expect(isCancellation(new Error('boom'))).toBe(false);
-    expect(isCancellation(undefined)).toBe(false);
-  });
-
-  it('is the one kind observed on hardware, so it is not provisional', () => {
-    expect(toScanError(new NfcError.UserCancel())).toMatchObject({
-      kind: 'cancelled',
-      provisional: false,
-    });
-  });
-});
-
-describe('reaching the same class from both platforms', () => {
-  /**
-   * iOS returns the string `NFCError:200`; Android returns the literal
-   * `'cancelled'`. Different native worlds, one JS class — one of the few
-   * places the library hides a platform difference instead of leaking it.
-   */
-  it('iOS NFCError:200 and Android "cancelled" both become UserCancel', () => {
-    const fromIos = NfcError.buildNfcExceptionIOS('NFCError:200');
-    const fromAndroid = NfcError.buildNfcExceptionAndroid('cancelled');
-
-    expect(isCancellation(fromIos)).toBe(true);
-    expect(isCancellation(fromAndroid)).toBe(true);
-    expect(toScanError(fromIos).kind).toBe(toScanError(fromAndroid).kind);
-  });
-});
-
-describe('classification', () => {
+describe('native module errors map onto the same surface', () => {
   it.each([
-    [new NfcError.Timeout(), 'timeout'],
-    [new NfcError.TagConnectionLost(), 'connection-lost'],
-    [new NfcError.TagNotConnected(), 'connection-lost'],
-    [new NfcError.RetryExceeded(), 'connection-lost'],
-    [new NfcError.SessionInvalidated(), 'connection-lost'],
-    [new NfcError.SystemBusy(), 'system-busy'],
-    [new NfcError.RadioDisabled(), 'nfc-off'],
-    [new NfcError.UnsupportedFeature(), 'unsupported'],
-    [new NfcError.FirstNdefInvalid(), 'not-ndef'],
-  ])('maps %o', (error, kind) => {
-    expect(toScanError(error).kind).toBe(kind);
+    ['UserCancelledException', 'cancelled'],
+    ['TimeoutException', 'timeout'],
+    ['SystemBusyException', 'system-busy'],
+    ['ConnectFailedException', 'connection-lost'],
+    ['StatusFailedException', 'connection-lost'],
+    ['SessionFailedException', 'connection-lost'],
+    ['NotNdefException', 'not-ndef'],
+    ['NfcUnavailableException', 'unsupported'],
+    ['TagReadOnlyException', 'read-only'],
+    ['TagTooSmallException', 'too-big-for-tag'],
+    ['WriteFailedException', 'write-failed'],
+    ['InvalidMessageException', 'write-failed'],
+  ])('%s → %s', (code, kind) => {
+    expect(toScanError(wrapped(code, 'something')).kind).toBe(kind);
   });
 
-  it('falls back to unknown for an unrecognised error', () => {
-    expect(toScanError(new Error('something else')).kind).toBe('unknown');
+  it('a cancel is a cancellation, not a failure', () => {
+    const fromNative = toScanError(wrapped('UserCancelledException', 'The scan was cancelled.'));
+
+    expect(fromNative.kind).toBe('cancelled');
+    expect(fromNative.provisional).toBe(false);
   });
 
-  it('survives a thrown non-Error', () => {
-    const mapped = toScanError('a bare string');
-
-    expect(mapped.kind).toBe('unknown');
-    expect(mapped.developer).toContain('a bare string');
-  });
-
-  it('everything except cancellation is flagged provisional until observed', () => {
-    const kinds = [new NfcError.Timeout(), new NfcError.SystemBusy(), new Error('x')];
-
-    for (const error of kinds) {
-      expect(toScanError(error).provisional).toBe(true);
-    }
-  });
-});
-
-describe('the Android unformatted-tag path (provisional — task H1)', () => {
-  /**
-   * Android reports this as text inside a bare NfcErrorBase rather than as a
-   * code. The hint list is a guess from the Android source and has never been
-   * seen on a device, so it must stay flagged.
-   */
-  it('matches a message that mentions Ndef', () => {
-    const error = new NfcError.NfcErrorBase('No Ndef technology on this tag');
-
-    expect(toScanError(error)).toMatchObject({ kind: 'not-ndef', provisional: true });
-  });
-
-  it('does not swallow an unrelated message', () => {
-    expect(toScanError(new NfcError.NfcErrorBase('disk on fire')).kind).toBe('unknown');
-  });
-});
-
-describe('developer detail', () => {
-  it('states the empty message explicitly rather than printing nothing', () => {
-    const mapped = toScanError(new NfcError.UserCancel());
-
-    expect(mapped.developer).toContain('NfcError.UserCancel');
-    expect(mapped.developer).toContain('message: "" (empty)');
-  });
-
-  it('uses a hardcoded class name so minification cannot corrupt it', () => {
-    // Simulates a release build where the class name has been mangled.
-    class Mangled extends NfcError.Timeout {}
-    Object.defineProperty(Mangled, 'name', { value: 'a' });
-
-    expect(toScanError(new Mangled()).developer).toContain('NfcError.Timeout');
-  });
-
-  it('shows a real message when there is one', () => {
-    expect(toScanError(new NfcError.NfcErrorBase('disk on fire')).developer).toContain(
-      'message: disk on fire'
+  it('prefers the native message, which carries real numbers', () => {
+    const error = wrapped(
+      'TagTooSmallException',
+      'Too big for this tag: the tag reports 137 bytes and this needs 202. Nothing was written.'
     );
+
+    expect(toScanError(error).detail).toContain('137');
+    expect(toScanError(error).detail).toContain('202');
+  });
+
+  it('keeps the whole cause chain in developer detail', () => {
+    const developer = toScanError(wrapped('TimeoutException', 'timed out')).developer;
+
+    expect(developer).toContain('TimeoutException');
+    expect(developer).toContain('↳');
+  });
+
+  it('flags unobserved native mappings as provisional', () => {
+    expect(toScanError(wrapped('UserCancelledException', 'x')).provisional).toBe(false);
+    expect(toScanError(wrapped('TimeoutException', 'x')).provisional).toBe(true);
+  });
+
+  it('falls through to unknown for a code we do not recognise', () => {
+    expect(toScanError(wrapped('SomethingNewException', 'x')).kind).toBe('unknown');
+  });
+
+  it('does not mistake a plain Error for a native exception', () => {
+    expect(toScanError(new Error('ordinary failure')).kind).toBe('unknown');
+  });
+});
+
+describe('isCancellation', () => {
+  it('recognises our native code across the bridge', () => {
+    expect(isCancellation(wrapped('UserCancelledException', 'The scan was cancelled.'))).toBe(true);
+  });
+
+  it('still says no to everything else', () => {
+    expect(isCancellation(wrapped('TimeoutException', 'x'))).toBe(false);
+    expect(isCancellation(new Error('boom'))).toBe(false);
+    expect(isCancellation(null)).toBe(false);
+  });
+});
+
+describe('the T9 cancel regression', () => {
+  /**
+   * Reproduces exactly what the device produced: Expo sets `code` to its own
+   * derived `ERR_USER_CANCELLED`, while the class name lives in the cause
+   * chain. Matching only on the class name missed it, and a cancelled scan
+   * rendered "Could not read the tag".
+   */
+  const realCancel = Object.assign(
+    new Error(
+      "Calling the 'readTag' function has failed → Caused by: UserCancelledException: The scan was cancelled."
+    ),
+    { code: 'ERR_USER_CANCELLED' }
+  );
+
+  it('is recognised as a cancellation, so nothing is rendered', () => {
+    expect(isCancellation(realCancel)).toBe(true);
+  });
+
+  it('maps to cancelled rather than unknown', () => {
+    expect(toScanError(realCancel).kind).toBe('cancelled');
+  });
+
+  it('is still recognised if Expo ever stops setting a code', () => {
+    const noCode = new Error(
+      "Calling the 'readTag' function has failed → Caused by: UserCancelledException: cancelled"
+    );
+
+    expect(isCancellation(noCode)).toBe(true);
+  });
+
+  it('matches other exceptions by their derived code too', () => {
+    const timeout = Object.assign(new Error('failed → Caused by: X: timed out'), {
+      code: 'ERR_TIMEOUT',
+    });
+
+    expect(toScanError(timeout).kind).toBe('timeout');
   });
 });

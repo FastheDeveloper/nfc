@@ -4,7 +4,11 @@ const expoConfig = require('eslint-config-expo/flat');
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ['dist/*'],
+    // `vendor/` is a frozen copy of a removed dependency, kept as executable
+    // evidence for why we replaced it (see its README). Its value is that it is
+    // wrong in specific, documented ways — linting or "fixing" it would destroy
+    // the thing it is there to demonstrate.
+    ignores: ['dist/*', 'vendor/*'],
   },
   {
     rules: {

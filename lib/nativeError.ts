@@ -24,6 +24,19 @@
 export type NativeErrorInfo = {
   /** Expo's error code when there is one, else the class name. */
   code: string;
+  /**
+   * The Swift/Kotlin class name, recovered from the cause chain.
+   *
+   * **Not the same as `code`.** Expo derives the code from the class name by
+   * stripping the trailing `Exception`, splitting camelCase and upper-casing
+   * it, so `UserCancelledException` reaches JavaScript as
+   * `ERR_USER_CANCELLED` (`expo-modules-core/ios/Core/Exceptions/CodedError.swift:45`).
+   *
+   * Both are kept because matching on either alone is fragile: the code is
+   * absent on some paths, and the class name is absent if a future Expo stops
+   * embedding it in the message. See `expoCodeFor`.
+   */
+  className: string | null;
   /** The innermost message — ours, when we threw it. */
   message: string;
   /** Every link in the chain, outermost first. Useful in developer detail. */
@@ -39,7 +52,12 @@ const CAUSE_SEPARATOR = /\s*(?:→\s*)?Caused by:?\s*/;
 
 export function describeNativeError(error: unknown): NativeErrorInfo {
   if (!(error instanceof Error)) {
-    return { code: typeof error, message: String(error), chain: [String(error)] };
+    return {
+      code: typeof error,
+      className: null,
+      message: String(error),
+      chain: [String(error)],
+    };
   }
 
   const chain = error.message
@@ -61,7 +79,29 @@ export function describeNativeError(error: unknown): NativeErrorInfo {
       typeof codeFromError === 'string' && codeFromError
         ? codeFromError
         : (match?.[1] ?? error.name),
+    className: match?.[1] ?? null,
     message: match?.[2] ?? innermost,
     chain,
   };
+}
+
+/**
+ * Reproduce Expo's class-name → code transformation.
+ *
+ * Mirrors `errorCodeFromString` in
+ * `expo-modules-core/ios/Core/Exceptions/CodedError.swift`:
+ *
+ *   1. drop a trailing `Error` or `Exception` (and any generic parameters)
+ *   2. insert `_` at every lowercase→uppercase boundary
+ *   3. upper-case, prefix `ERR_`
+ *
+ *   UserCancelledException → UserCancelled → User_Cancelled → ERR_USER_CANCELLED
+ *
+ * Kept here so the mapping table can be written in terms of the class names we
+ * actually wrote in Swift, with the codes derived from them — one source of
+ * truth instead of two lists that can drift apart.
+ */
+export function expoCodeFor(className: string): string {
+  const stripped = className.replace(/(Error|Exception)?(<.*>)?$/, '');
+  return `ERR_${stripped.replace(/(.)([A-Z])/g, '$1_$2').toUpperCase()}`;
 }

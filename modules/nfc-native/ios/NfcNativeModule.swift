@@ -26,6 +26,9 @@ public class NfcNativeModule: Module {
    */
   private var readSession: Any?
 
+  /// Same retention reasoning as `readSession`, for the write side.
+  private var writeSession: Any?
+
   public func definition() -> ModuleDefinition {
     Name("NfcNative")
 
@@ -86,6 +89,25 @@ public class NfcNativeModule: Module {
       let session = NfcReadSession()
       self.readSession = session
       session.start(alertMessage: alertMessage, promise: promise)
+    }
+
+    /**
+     * Write one NDEF message, then read it back and say whether it matched.
+     *
+     * `bytes` come from our own `lib/ndefEncode.ts`, so the whole path — encode
+     * in TypeScript, write in Swift, decode in TypeScript — is code this
+     * project owns. CoreNFC parses the bytes before a tag is involved, which
+     * makes a malformed message fail early and harmlessly.
+     */
+    AsyncFunction("writeTag") { (alertMessage: String, bytes: [UInt8], promise: Promise) in
+      guard #available(iOS 13.0, *) else {
+        promise.reject(NfcUnavailableException())
+        return
+      }
+
+      let session = NfcWriteSession()
+      self.writeSession = session
+      session.start(alertMessage: alertMessage, bytes: bytes, promise: promise)
     }
   }
 }

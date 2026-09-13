@@ -25,7 +25,11 @@ physical hardware, on both platforms.**
 ## Stack
 
 Expo SDK 57 · React Native 0.86 · TypeScript · Expo Router · NativeWind ·
-Zustand + AsyncStorage · `react-native-nfc-manager` · pnpm
+Zustand + AsyncStorage · pnpm
+
+**No third-party NFC dependency.** `modules/nfc-native` is a local Expo Module written in Swift and
+Kotlin — see DEVLOG §4 for why, and `vendor/` for the evidence, kept deliberately after the
+dependency it describes was removed.
 
 There is no backend. The profile lives on the device and is written directly to the tag.
 
@@ -62,5 +66,5 @@ forced on us by NFC rather than chosen.
 - [x] **Phase 1** — NFC plumbing, entitlements, raw NDEF read
 - [x] **Phase 2** — Read & Tag Info screens, full NDEF parsing
 - [x] **Phase 3** — Profile editor, vCard + URL writing, capacity checks
-- [ ] **Phase 4** — our own Expo Module in Kotlin + Swift: owning the native layer
+- [x] **Phase 4** — our own Expo Module in Kotlin + Swift: owning the native layer
 - [ ] **Phase 5** — read-only locking, EAS comparison, article prep

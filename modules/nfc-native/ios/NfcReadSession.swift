@@ -83,7 +83,7 @@ final class NfcReadSession: NSObject, NFCTagReaderSessionDelegate {
     // The only place a cancel or a timeout surfaces. Note that a *successful*
     // read also invalidates the session, which is why `settle` is guarded —
     // this fires afterwards and must not overwrite the result.
-    settle(rejecting: mapReaderError(error))
+    settle(rejecting: NfcReaderErrors.map(error))
   }
 
   func tagReaderSession(_ session: NFCTagReaderSession, didDetect tags: [NFCTag]) {
@@ -100,7 +100,7 @@ final class NfcReadSession: NSObject, NFCTagReaderSessionDelegate {
         return
       }
 
-      guard let ndefTag = Self.ndefTag(from: tag) else {
+      guard let ndefTag = NfcTagInfo.ndefTag(from: tag) else {
         self.finish(session, rejecting: NotNdefException())
         return
       }
@@ -138,11 +138,11 @@ final class NfcReadSession: NSObject, NFCTagReaderSessionDelegate {
         }
 
         let payload: [String: Any] = [
-          "id": Self.identifier(of: tag),
-          "tech": Self.tech(of: tag),
+          "id": NfcTagInfo.identifier(of: tag),
+          "tech": NfcTagInfo.tech(of: tag),
           "status": status.rawValue,
           "capacity": capacity,
-          "ndefMessage": Self.records(from: message),
+          "ndefMessage": NfcTagInfo.records(from: message),
         ]
 
         session.alertMessage = "Tag read."
@@ -152,61 +152,8 @@ final class NfcReadSession: NSObject, NFCTagReaderSessionDelegate {
     }
   }
 
-  // MARK: - Conversion
-
-  private static func ndefTag(from tag: NFCTag) -> NFCNDEFTag? {
-    switch tag {
-    case let .miFare(tag): return tag
-    case let .iso7816(tag): return tag
-    case let .iso15693(tag): return tag
-    case let .feliCa(tag): return tag
-    @unknown default: return nil
-    }
-  }
-
-  /// Uppercase hex, matching what the rest of the app already displays.
-  private static func identifier(of tag: NFCTag) -> String {
-    let data: Data
-    switch tag {
-    case let .miFare(tag): data = tag.identifier
-    case let .iso7816(tag): data = tag.identifier
-    case let .iso15693(tag): data = tag.identifier
-    case let .feliCa(tag): data = tag.currentIDm
-    @unknown default: data = Data()
-    }
-    return data.map { String(format: "%02X", $0) }.joined()
-  }
-
-  private static func tech(of tag: NFCTag) -> String {
-    switch tag {
-    case .miFare: return "mifare"
-    case .iso7816: return "iso7816"
-    case .iso15693: return "iso15693"
-    case .feliCa: return "felica"
-    @unknown default: return "unknown"
-    }
-  }
-
-  /**
-   * NDEF records, as plain arrays of byte values.
-   *
-   * `Data` does not cross the bridge, so every field becomes `[Int]`. That is
-   * the same shape `lib/ndef.ts` already decodes, which is why this phase
-   * replaces the *bridge* and not the parser — the TypeScript decoder, its 60
-   * tests and its three documented bug fixes all keep working unchanged.
-   */
-  private static func records(from message: NFCNDEFMessage?) -> [[String: Any]] {
-    guard let message else { return [] }
-
-    return message.records.map { record in
-      [
-        "tnf": Int(record.typeNameFormat.rawValue),
-        "type": [UInt8](record.type).map(Int.init),
-        "id": [UInt8](record.identifier).map(Int.init),
-        "payload": [UInt8](record.payload).map(Int.init),
-      ]
-    }
-  }
+  // Tag → bridge conversions now live in NfcTagInfo, shared with the write
+  // session so a read and a write can never disagree about what a UID is.
 
   // MARK: - Settling exactly once
 
@@ -235,27 +182,6 @@ final class NfcReadSession: NSObject, NFCTagReaderSessionDelegate {
     promise.reject(exception)
   }
 
-  /**
-   * CoreNFC's error codes, translated.
-   *
-   * A user tapping Cancel is not a failure, and the JavaScript layer needs to
-   * be able to tell that apart from a real problem without string matching —
-   * the exact trap the library falls into (DEVLOG §1.13).
-   */
-  private func mapReaderError(_ error: Error) -> Exception {
-    guard let readerError = error as? NFCReaderError else {
-      return SessionFailedException(error.localizedDescription)
-    }
-
-    switch readerError.code {
-    case .readerSessionInvalidationErrorUserCanceled:
-      return UserCancelledException()
-    case .readerSessionInvalidationErrorSessionTimeout:
-      return TimeoutException()
-    case .readerSessionInvalidationErrorSystemIsBusy:
-      return SystemBusyException()
-    default:
-      return SessionFailedException(readerError.localizedDescription)
-    }
-  }
+  // CoreNFC error-code translation lives in NfcReaderErrors, shared with the
+  // write session.
 }

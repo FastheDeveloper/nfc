@@ -25,7 +25,7 @@
  */
 
 import { encodedSize } from './ndefEncode';
-import type { NdefRecord } from 'react-native-nfc-manager';
+import type { NdefRecord } from './nfcTypes';
 
 /**
  * The maximum NDEF message an NTAG213 holds: **137 bytes**.

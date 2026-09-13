@@ -315,6 +315,72 @@ when a tag is pulled away mid-read.
 | Read-only / locked tag    | ⏳      | ⏳  |
 | Unformatted tag           | ⏳      | ⏳  |
 
+## 8. Writing the native layer ourselves
+
+Phases 1–3 saw these platforms through `react-native-nfc-manager`. Phase 4 replaced it with our own
+Swift and Kotlin, which changed what is visible: the differences below are not what a library
+chose to expose, they are what the platforms actually are.
+
+### The shape of a scan
+
+|                  | Android                               | iOS                                                                |
+| ---------------- | ------------------------------------- | ------------------------------------------------------------------ |
+| API style        | ⏳ reader-mode callback on an adapter | ✅ **session + delegate**, four nested async steps                 |
+| Who owns the UI  | the app                               | **CoreNFC** — a system sheet we cannot restyle                     |
+| Session lifetime | ⏳ tied to the activity               | ✅ one tag, then invalidated — including on success                |
+| Cancelling       | ⏳ the app must provide it            | ✅ the system sheet does it                                        |
+| Retention hazard | ⏳                                    | ✅ **the session must be retained or the sheet vanishes silently** |
+
+That last row has no Android equivalent and no error message. A `NFCTagReaderSession` held in a
+local variable is deallocated when the function returns, and the sheet simply disappears — the
+single easiest way to get a CoreNFC integration wrong.
+
+### Entitlements are per **polling option**, not per feature
+
+Phase 1 established that iOS needs an entitlement to read NFC at all (§2). Writing the session
+ourselves surfaced a finer-grained version of the same rule:
+
+| Polling option | Extra entitlement required                                     |
+| -------------- | -------------------------------------------------------------- |
+| `.iso14443`    | none beyond the `TAG` format — covers NTAG and MIFARE          |
+| `.iso15693`    | none beyond `TAG`                                              |
+| `.iso18092`    | **`com.apple.developer.nfc.readersession.felica.systemcodes`** |
+
+Requesting a polling option you cannot sign for fails the **whole session** with
+`Missing required entitlement` — not just that mode, and without naming FeliCa. Android has no
+analogue: one `android.permission.NFC` covers everything the adapter can do.
+
+### Capacity and writability, settled
+
+| Question | Android read      | iOS read       | Either, in a session            |
+| -------- | ----------------- | -------------- | ------------------------------- |
+| Capacity | ✅ `getMaxSize()` | ❌ not carried | ✅ **both** (`queryNDEFStatus`) |
+| Writable | ✅ `isWritable`   | ❌ not carried | ✅ **both** (status)            |
+
+Our module asks the status query on **every read**, so on iOS the app now has a capacity where the
+library's read path gave it none. That is a difference in what we chose to ask, not in what the
+platform can answer — see the correction at the top of §5.
+
+### Errors, from the inside
+
+|                       | `react-native-nfc-manager`    | Ours                   |
+| --------------------- | ----------------------------- | ---------------------- |
+| Carries a message     | ❌ always `''` (§1.13)        | ✅                     |
+| Carries a code        | ❌ meaning lives in the class | ✅                     |
+| Survives minification | ⚠️ needs `instanceof`         | ✅ matched by code     |
+| Reaches JS unwrapped  | n/a                           | ❌ **wrapped by Expo** |
+
+The last row is the one that cost time. Expo wraps a native exception in a `FunctionCallException`
+and derives its code from the class name — `UserCancelledException` arrives as `ERR_USER_CANCELLED`
+(`expo-modules-core/ios/Core/Exceptions/CodedError.swift:45`). Writing your own typed errors is
+necessary but not sufficient; the framework's plumbing still sits between you and the caller.
+DEVLOG §4.5.
+
+### Still ⏳ — everything Android in this section
+
+No Android device has been available since Phase 1. The Kotlin module compiles and is written
+against the documented API, and **not one line of it has been run.**
+
 ## 7. Things one platform simply cannot do
 
 | Capability                      | Android                           | iOS                                                                | Notes                                                       |

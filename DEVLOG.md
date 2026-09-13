@@ -1703,3 +1703,248 @@ that does not depend on any platform lacking a capability.
 The asymmetry arguments that survive today untouched: `isNfcEnabled()` is unreachable by
 construction on iOS rather than merely unasked, there is no settings deep-link on iOS, and the
 library is a legacy bridge module running through RN's interop layer.
+
+---
+
+## Phase 4 — Writing the native module
+
+Phases 1–3 were built on `react-native-nfc-manager`. Phase 4 replaces it with a module written by
+hand in Swift and Kotlin, and ends with the dependency removed from `package.json`.
+
+The reason changed partway through, and that is worth recording rather than tidying away.
+
+### 4.1 The argument that did not survive contact with hardware
+
+Phase 4 was originally justified by a capability gap: iOS could not report tag capacity, so a
+native module was needed to read it from the tag directly. **That argument evaporated in §3.1** —
+iOS reports capacity perfectly well through `queryNDEFStatus`, and the claim had been an inference
+rather than an observation.
+
+Rather than quietly keeping the phase on the plan with its motivation gone, it was re-decided.
+Fas's framing, and it is a better one:
+
+> in case someone prefers to build their own package, or the company is huge on doing things
+> internally
+
+That does not depend on any platform lacking anything. Plenty of teams cannot take a third-party
+dependency at all — internal-only policies, audit requirements, or simply a package they cannot get
+a fix merged into on a useful timescale. **"How would I build this myself?" is worth answering on
+its own terms.**
+
+And the evidence for _this particular_ dependency was already gathered, by us, by reading it:
+
+| Finding                                                                  | Where |
+| ------------------------------------------------------------------------ | ----- |
+| Text decoder measures the language code's length, then discards the code | §2.3  |
+| UTF-16 flag ignored — an open `TODO`                                     | §2.3  |
+| `String.fromCharCode` truncates above U+FFFF: U+1F600 → U+F600           | §2.3  |
+| `index.d.ts` is invalid TypeScript                                       | §1.2  |
+| Package root throws outside a native runtime                             | §2.7  |
+| All 24 error classes carry an empty `message`                            | §1.13 |
+
+None of those are fixable from JavaScript, and none were discovered in production — they came from
+reading the source before trusting it.
+
+### 4.2 The scaffolding is no longer the hard part
+
+```bash
+npx create-expo-module@latest --local --name NfcNative \
+  --package com.nfccard.tap.nfcnative -p apple android --features Function
+```
+
+Four files, autolinked by `pod install`, no Xcode project surgery, no `RCT_EXPORT_METHOD`, no
+manual JSI. For anyone who last wrote a React Native native module in the bridge era, that is the
+headline: **the ceremony is gone.**
+
+Two snags, neither in the docs:
+
+- `--name` sets the _native module_ name. The **directory** comes from a positional path argument,
+  so without one it lands in `modules/my-module`.
+- The generated podspec declares an iOS **16.4** floor. Ours matched (SDK 57's default), but a
+  module can silently raise an app's minimum deployment target, and that is worth checking before
+  it surprises someone.
+
+### 4.3 What the library was hiding
+
+The capabilities slice (T1) is four functions and proves the toolchain. The read session is where
+the real work is, and it is worth showing in full because none of it is JavaScript-shaped.
+
+**CoreNFC is delegate-and-callback based.** One read is four nested asynchronous steps — begin →
+detect → connect → `queryNDEFStatus` → `readNDEF` — each with its own error, none returning
+anything.
+
+**A JavaScript promise must settle exactly once.** Every failure path therefore routes through a
+single lock-guarded `settle()`. The subtlety that will catch people: a _successful_ read also
+invalidates the session, so `didInvalidateWithError` fires **after** completion and would overwrite
+the result. Guarded, not assumed.
+
+**The session must be retained by the module, not the function.** A local variable is deallocated
+on return, taking the CoreNFC session with it — and the system sheet vanishes with **no error at
+all**. This is the single easiest way to get a CoreNFC integration subtly wrong, and nothing tells
+you.
+
+```swift
+// Held for the life of the module, not the scan.
+private var readSession: Any?
+```
+
+The write session adds two responsibilities that only exist because a write changes something: ask
+the tag first (`queryNDEFStatus` for read-only status and real capacity, refusing _before_ anything
+is sent), and verify afterwards by reading back inside the same session. **One session, not two** —
+each `requestTechnology` puts a system sheet in front of an iOS user, so splitting them would mean
+two sheets and two taps for one action.
+
+Verification compares **record content, not raw bytes**: a tag may legally return a message whose
+framing differs from what we sent while carrying identical data.
+
+### 4.4 Ask only for what you can sign for
+
+The first build that reached the phone failed at runtime with `Missing required entitlement`.
+
+The cause was a single polling option. `NFCTagReaderSession` was opened with
+`[.iso14443, .iso15693, .iso18092]`, and `.iso18092` — FeliCa — additionally requires
+`com.apple.developer.nfc.readersession.felica.systemcodes`, which we do not hold. **Asking for it
+fails the entire session, not just that polling mode.**
+
+It had been added on the reasoning that a wider net would produce better errors for unexpected
+tags. It produced a session that could not start at all. Narrowed to `[.iso14443, .iso15693]`, both
+covered by the `TAG` format already in the entitlements.
+
+The same lesson as §1.9 from the other direction: there, a missing entitlement surfaced as a
+code-signing failure that never said "NFC". Here, an entitlement we never needed surfaced as a
+runtime failure that never said "FeliCa".
+
+### 4.5 Expo's error code is not your class name
+
+The best bug of the phase, because 272 passing tests said nothing about it.
+
+After switching the app to the native backend (T9), cancelling a scan rendered a red _"Could not
+read the tag"_ card instead of nothing.
+
+Our Swift throws `UserCancelledException`. The JavaScript mapping table was keyed on
+`UserCancelledException`. Those do not match, because Expo derives the code:
+
+```swift
+// expo-modules-core/ios/Core/Exceptions/CodedError.swift:45
+// strip trailing Error/Exception → split camelCase → uppercase → prefix ERR_
+UserCancelledException  →  ERR_USER_CANCELLED
+```
+
+`describeNativeError()` prefers that code, the lookup missed, everything fell through to the
+generic "unknown" card.
+
+**Why the tests were silent is the part worth keeping.** Every test of that mapping used a fixture
+written by hand:
+
+```ts
+const wrapped = (code, message) =>
+  new Error(`Calling the 'readTag' function has failed → Caused by: ${code}: ${message}`);
+```
+
+No `code` property — because we did not know Expo set one. The code and its tests shared a single
+wrong assumption and agreed with each other perfectly. **A fixture you invented can only prove your
+code is self-consistent.** It took a thumb on a Cancel button.
+
+The fix keeps the table keyed on the Swift class names we actually wrote and _derives_ the `ERR_`
+forms with `expoCodeFor()`, mirroring Expo's algorithm — one source of truth instead of two lists
+that drift. Matching tries both. The regression is now pinned by a test using the **verbatim device
+error**, `code` property and all.
+
+A related finding from T1, same shape: Expo wraps a native exception in a `FunctionCallException`,
+so `err.message` is the framework describing its own plumbing and _your_ sentence is at the end of
+the cause chain. This is the mirror image of §1.13 — there the message was empty, here it is buried
+— and both break the same reflex. **Owning the native side does not exempt you from error plumbing;
+it changes which layer surprises you.**
+
+### 4.6 Proving the swap instead of asserting it
+
+Before switching, both implementations read the same physical chip and the results were diffed
+field by field (`lib/parity.ts`, and a screen to drive it).
+
+The design decision that made it useful: **"different" is not one outcome.** Our read reports
+capacity and writability that the library's read path does not carry, and scoring that as a
+mismatch would be actively misleading. Five statuses:
+
+| Status         | Meaning                                                |
+| -------------- | ------------------------------------------------------ |
+| `same`         | both reported it, they agree                           |
+| `differs`      | both reported it, they disagree — **the only bad one** |
+| `native-only`  | ours knows more — _the reason to switch_               |
+| `library-only` | we lost something — **also blocks the swap**           |
+| `neither`      | nothing to conclude                                    |
+
+`library-only` blocking the swap matters: losing information is a real problem even though it is
+not a contradiction.
+
+Result on a real NTAG213, 2026-09-13: **4 fields identical, 2 reported only by our module,
+0 conflicts.** That is the evidence the switch was made on.
+
+### 4.7 Removing a dependency means inheriting its build configuration
+
+The riskiest part of T10 was not code.
+
+`react-native-nfc-manager` ships a **config plugin**, and that plugin was generating the iOS NFC
+entitlement and `NFCReaderUsageDescription`. Remove the package and both vanish — **the app loses
+NFC with no error at all.** Nothing fails at build time; the system sheet simply never appears
+again.
+
+So the order was: declare them explicitly in `app.json`, prebuild, verify the output is
+byte-identical to the plugin's, _then_ remove the plugin, verify again, _then_ remove the package.
+
+```json
+"ios": {
+  "infoPlist": { "NFCReaderUsageDescription": "TapCard uses NFC to …" },
+  "entitlements": { "com.apple.developer.nfc.readersession.formats": ["NDEF", "TAG"] }
+}
+```
+
+**Generalisable:** before deleting a dependency, check what its config plugin was doing for you. The
+code it exports is the visible half.
+
+### 4.8 Keeping the evidence after deleting the dependency
+
+The argument for Phase 4 rests on defects in a package that no longer exists. Left alone, deleting
+it would have turned an executable argument back into a claim in a document — and taken the
+**agreement** tests with it, leaving a hand-typed 36-entry lookup table unverified.
+
+So `vendor/react-native-nfc-manager/` holds a frozen copy of the two decoders and the error classes,
+MIT licence included, with a README stating plainly that nothing imports it, that it exists as
+evidence, and that it must never be "fixed" — its value is being wrong in the documented ways.
+ESLint and Prettier ignore it, because reformatting would destroy the diff against upstream.
+
+`lib/vendorEvidence.test.ts` asserts both findings directly. If a future version of the package
+fixes any of them, those tests fail — which is the signal to re-open the question, not a nuisance.
+
+### 4.9 What the swap actually bought
+
+Not speed, and not lines of code — the module is more code than the dependency was.
+
+**Capacity on every read.** The library reads it only during a write session, so its `getTag()`
+never carries it. Tag Info showed "Not reported" for two phases; it now shows `137 bytes`. The Write
+screen stopped guessing without needing a write first.
+
+**Errors that carry a code _and_ a message.** The defect behind §1.13's silent failure is gone by
+construction.
+
+**A simplification we did not plan.** `lib/writeError.ts` existed so a JavaScript pre-flight refusal
+could be told apart from CoreNFC's (§3.3). The pre-flight moved into Swift, and capacity now arrives
+on every read, so the whole file became unreachable and was deleted.
+
+**And the thing a team would actually be buying:** the next decoder bug is an afternoon's work
+instead of an issue on someone else's tracker.
+
+### 4.10 What Phase 4 shipped
+
+|                               |                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------- |
+| `modules/nfc-native/ios/`     | `NfcNativeModule`, `NfcReadSession`, `NfcWriteSession`, `NfcTagInfo`, `NfcExceptions` |
+| `modules/nfc-native/android/` | Capabilities over a real `NfcAdapter` — ⛔ compiled, never run                        |
+| `lib/nfcBackend.ts`           | The single boundary every screen imports                                              |
+| `lib/nativeError.ts`          | Unwraps Expo's cause chain; mirrors its code derivation                               |
+| `lib/nfcTypes.ts`             | Types we own, with `ndefMessage` correctly optional                                   |
+| `vendor/`                     | The removed dependency, frozen as evidence                                            |
+| Removed                       | `react-native-nfc-manager`, `lib/nfc.ts`, `lib/writeError.ts`, and its config plugin  |
+
+**Still open, all behind an Android device:** the Kotlin read path (T3), formatting (T6), a cancel
+entry point for Android — where, unlike iOS, the app must draw its own way out — and every Android
+column in PLATFORM-NOTES.

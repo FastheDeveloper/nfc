@@ -24,9 +24,7 @@
  * survivable.
  */
 
-import * as NfcError from 'react-native-nfc-manager/src/NfcError';
-
-import { WritePreflightError } from './writeError';
+import { describeNativeError, expoCodeFor } from './nativeError';
 
 export type ScanErrorKind =
   | 'cancelled'
@@ -60,184 +58,129 @@ export type ScanError = {
 };
 
 /**
- * The mapping table.
+ * Our native module's exceptions.
  *
- * `className` is written out rather than read from the constructor so the
- * developer detail stays correct after minification. Order matters only for
- * subclasses, and the library's error classes are all siblings.
+ * The table is keyed on the **Swift class names**, which is what we wrote and
+ * what appears in Expo's cause chain. Expo separately derives a code from each
+ * (`UserCancelledException` → `ERR_USER_CANCELLED`), so the lookup tries both
+ * forms. Keying on one and matching on the other is exactly the bug that made a
+ * cancelled scan render a "Could not read the tag" card after T9 (§T9a).
+ *
+ * `observed` marks what we have actually watched happen on hardware, which is
+ * what `provisional` reports.
  */
-const MAPPINGS: {
-  type: new () => Error;
-  className: string;
-  kind: ScanErrorKind;
-  title: string;
-  detail: string;
-}[] = [
-  {
-    type: NfcError.UserCancel,
-    className: 'NfcError.UserCancel',
+const NATIVE_CODES: Record<
+  string,
+  { kind: ScanErrorKind; title: string; detail: string; observed?: boolean }
+> = {
+  UserCancelledException: {
     kind: 'cancelled',
     title: 'Scan cancelled',
     detail: 'No tag was read.',
+    observed: true,
   },
-  {
-    type: NfcError.Timeout,
-    className: 'NfcError.Timeout',
+  TimeoutException: {
     kind: 'timeout',
     title: 'Scan timed out',
     detail: 'No tag was detected in time. Try again and hold the tag steady.',
   },
-  {
-    type: NfcError.TagConnectionLost,
-    className: 'NfcError.TagConnectionLost',
-    kind: 'connection-lost',
-    title: 'Lost contact with the tag',
-    detail: 'The tag moved away mid-read. Hold it still against the phone.',
-  },
-  {
-    type: NfcError.TagNotConnected,
-    className: 'NfcError.TagNotConnected',
-    kind: 'connection-lost',
-    title: 'Lost contact with the tag',
-    detail: 'The tag was not in range long enough. Hold it still against the phone.',
-  },
-  {
-    type: NfcError.RetryExceeded,
-    className: 'NfcError.RetryExceeded',
-    kind: 'connection-lost',
-    title: 'Could not read the tag',
-    detail: 'Several attempts failed. Reposition the tag and try again.',
-  },
-  {
-    type: NfcError.SessionInvalidated,
-    className: 'NfcError.SessionInvalidated',
-    kind: 'connection-lost',
-    title: 'The scan session ended',
-    detail: 'The reader session closed before the tag was read. Try again.',
-  },
-  {
-    type: NfcError.SystemBusy,
-    className: 'NfcError.SystemBusy',
+  SystemBusyException: {
     kind: 'system-busy',
     title: 'NFC is busy',
     detail: 'The system NFC reader is in use. Wait a moment and try again.',
   },
-  {
-    type: NfcError.RadioDisabled,
-    className: 'NfcError.RadioDisabled',
-    kind: 'nfc-off',
-    title: 'NFC is switched off',
-    detail: 'Turn NFC on in system settings, then scan again.',
+  SessionFailedException: {
+    kind: 'connection-lost',
+    title: 'The scan session failed',
+    detail: 'Something interrupted the scan. Try again.',
   },
-  {
-    type: NfcError.UnsupportedFeature,
-    className: 'NfcError.UnsupportedFeature',
+  ConnectFailedException: {
+    kind: 'connection-lost',
+    title: 'Could not connect to the tag',
+    detail: 'The tag moved away too soon. Hold it still against the phone.',
+  },
+  StatusFailedException: {
+    kind: 'connection-lost',
+    title: 'Could not read the tag',
+    detail: 'The tag did not answer. Hold it still and try again.',
+  },
+  NoTagException: {
+    kind: 'unknown',
+    title: 'No tag found',
+    detail: 'The session ended without finding a tag.',
+  },
+  NotNdefException: {
+    kind: 'not-ndef',
+    title: 'This tag is not NDEF formatted',
+    detail: 'TapCard reads tags that store data in the NDEF format. This one does not yet.',
+  },
+  NfcUnavailableException: {
     kind: 'unsupported',
-    title: 'Not supported on this device',
-    detail: 'This device cannot read this kind of tag.',
+    title: 'NFC not available',
+    detail: 'This device cannot read NFC tags.',
+    observed: true,
   },
-  {
-    type: NfcError.TagNotWritable,
-    className: 'NfcError.TagNotWritable',
+  TagReadOnlyException: {
     kind: 'read-only',
     title: 'This tag is locked',
-    detail: 'It has been made permanently read-only and cannot be changed.',
+    detail: 'It reports itself permanently read-only, so nothing was written.',
   },
-  {
-    type: NfcError.TagSizeTooSmall,
-    className: 'NfcError.TagSizeTooSmall',
+  TagTooSmallException: {
     kind: 'too-big-for-tag',
     title: 'Too big for this tag',
-    detail: 'The tag does not have room. Shorten your card, or write a link instead.',
+    detail: 'The tag does not have room. Nothing was written.',
+    observed: true,
   },
-  {
-    type: NfcError.TagUpdateFailure,
-    className: 'NfcError.TagUpdateFailure',
+  WriteFailedException: {
     kind: 'write-failed',
     title: 'The write did not complete',
     detail: 'The tag may be partly written. Hold it steady and try again.',
   },
-  {
-    type: NfcError.ZeroLengthMessage,
-    className: 'NfcError.ZeroLengthMessage',
+  InvalidMessageException: {
     kind: 'write-failed',
     title: 'Nothing to write',
-    detail: 'The message was empty.',
+    detail: 'The message could not be encoded for the tag.',
   },
-  {
-    type: NfcError.FirstNdefInvalid,
-    className: 'NfcError.FirstNdefInvalid',
-    kind: 'not-ndef',
-    title: 'This tag is not NDEF formatted',
-    detail: 'The tag holds data TapCard cannot read. Writing to it will format it first.',
+  NoNfcSettingsException: {
+    kind: 'unsupported',
+    title: 'No NFC settings on iOS',
+    detail: 'iOS has no NFC setting to open.',
+    observed: true,
   },
-];
+};
 
 /**
- * Hints that Android used when a tag does not support the NDEF technology.
- *
- * Unlike iOS, which returns a numeric `NFCError:<code>` that the library maps
- * to a class, Android's failure for an unformatted tag arrives as a plain
- * string wrapped in `NfcErrorBase`. **This list is a guess from the Android
- * source and has never been seen on a device** (task H1) — which is why
- * anything it matches is flagged `provisional`.
+ * Expo's derived codes, built from the class names above rather than typed out
+ * a second time. One list, two ways of matching it.
  */
-const NOT_NDEF_HINTS = ['ndef', 'tech', 'technology', 'not supported'];
+const NATIVE_BY_EXPO_CODE: Record<string, (typeof NATIVE_CODES)[string]> = Object.fromEntries(
+  Object.entries(NATIVE_CODES).map(([className, mapping]) => [expoCodeFor(className), mapping])
+);
+
+function lookupNative(className: string | null, code: string) {
+  return (className ? NATIVE_CODES[className] : undefined) ?? NATIVE_BY_EXPO_CODE[code];
+}
 
 /** Everything we know how to say about a thrown value. */
 export function toScanError(error: unknown): ScanError {
-  // Ours first. This one is checked before the library's classes because it is
-  // the only error in the app that carries measured numbers, and because
-  // `provisional` is genuinely false for it — we watched our own code decide.
-  if (error instanceof WritePreflightError) {
-    const { reason, reported, needed } = error;
-    const capacity =
-      reported.capacity != null ? `${reported.capacity} bytes` : 'no capacity (it did not say)';
+  // Our own module's exceptions — the only native errors that exist now that
+  // the library is gone. The pre-flight refusal that used to be raised here in
+  // JavaScript moved into Swift with T5, so it arrives as
+  // `TagTooSmallException` like any other native error.
+  const native = describeNativeError(error);
+  const nativeMapping = lookupNative(native.className, native.code);
 
-    return reason === 'read-only'
-      ? {
-          kind: 'read-only',
-          title: 'This tag is locked',
-          detail: 'The tag reports itself as read-only, so nothing was written.',
-          developer: `WritePreflightError: read-only\ntag reported status ${reported.status}, ${capacity}\nnothing was sent`,
-          provisional: false,
-        }
-      : {
-          kind: 'too-big-for-tag',
-          title: 'Too big for this tag',
-          detail: `The tag reports ${capacity} and this needs ${needed}. Nothing was written — shorten your card, or write a link instead.`,
-          developer: `WritePreflightError: too-big\ntag reported status ${reported.status}, ${capacity}\nneeded ${needed} bytes\nrefused before writing — the tag is untouched`,
-          provisional: false,
-        };
-  }
-
-  for (const mapping of MAPPINGS) {
-    if (error instanceof mapping.type) {
-      return {
-        kind: mapping.kind,
-        title: mapping.title,
-        detail: mapping.detail,
-        developer: describe(error, mapping.className),
-        provisional: mapping.kind !== 'cancelled',
-      };
-    }
-  }
-
-  // An NfcErrorBase that matched no subclass carries a real message string —
-  // this is the Android path, where the native side reports text rather than a
-  // code.
-  if (error instanceof NfcError.NfcErrorBase && error.message) {
-    const lower = error.message.toLowerCase();
-
-    if (NOT_NDEF_HINTS.some((hint) => lower.includes(hint))) {
-      return {
-        kind: 'not-ndef',
-        title: 'This tag is not NDEF formatted',
-        detail: 'TapCard reads tags that store data in the NDEF format. This one does not yet.',
-        developer: describe(error, 'NfcError.NfcErrorBase'),
-        provisional: true,
-      };
-    }
+  if (nativeMapping) {
+    return {
+      kind: nativeMapping.kind,
+      title: nativeMapping.title,
+      // The native side often has more to say than a generic sentence —
+      // TagTooSmallException carries the tag's own numbers, for instance — so
+      // prefer its message when it gave us one.
+      detail: native.message || nativeMapping.detail,
+      developer: `${native.code}\n${native.chain.join('\n↳ ')}`,
+      provisional: !nativeMapping.observed,
+    };
   }
 
   return {
@@ -258,7 +201,17 @@ export function toScanError(error: unknown): ScanError {
  * replaced.
  */
 export function isCancellation(error: unknown): boolean {
-  return error instanceof NfcError.UserCancel;
+  // Either implementation. The library throws a class; ours sends a code across
+  // the bridge, where `instanceof` does not exist. Both mean the same thing to
+  // every caller, which is what lets T9 swap them without touching a screen.
+  const native = describeNativeError(error);
+
+  // Both forms, for the same reason as the mapping table: the class name comes
+  // from the cause chain, the ERR_ code from Expo's own derivation.
+  return (
+    native.className === 'UserCancelledException' ||
+    native.code === expoCodeFor('UserCancelledException')
+  );
 }
 
 /**

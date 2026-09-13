@@ -14,9 +14,8 @@ import { Button } from '../../components/Button';
 import { Container } from '../../components/Container';
 import { DeviceBanner } from '../../components/DeviceBanner';
 import { ErrorCard } from '../../components/ErrorCard';
-import { NativeCapabilities } from '../../components/NativeCapabilities';
 import { confirmRead } from '../../lib/feedback';
-import { cancelScan, checkNfcStatus, readTagOnce, type NfcStatus } from '../../lib/nfc';
+import { cancelScan, checkNfcStatus, readTag, type NfcStatus } from '../../lib/nfcBackend';
 import { summarise } from '../../lib/ndef';
 import { isCancellation, toScanError, type ScanError } from '../../lib/scanError';
 import { useTagStore, type ScanRecord } from '../../store/tag';
@@ -32,7 +31,7 @@ const NO_TAG_DATA: ScanError = {
   kind: 'unknown',
   title: 'No tag data',
   detail: 'The scan finished but the tag returned nothing readable. Try again.',
-  developer: 'readTagOnce() resolved with null',
+  developer: 'readTag() resolved with no tag',
   provisional: true,
 };
 
@@ -47,6 +46,7 @@ export default function ReadScreen() {
   const views = useTagStore((s) => s.views);
   const setTag = useTagStore((s) => s.setTag);
   const history = useTagStore((s) => s.history);
+  const setReportedCapacity = useTagStore((s) => s.setReportedCapacity);
 
   useEffect(() => {
     checkNfcStatus().then(setStatus);
@@ -58,14 +58,18 @@ export default function ReadScreen() {
     setScanning(true);
 
     try {
-      const result = await readTagOnce();
+      const { tag: scanned, capacity } = await readTag();
 
-      if (!result) {
+      if (!scanned) {
         setError(NO_TAG_DATA);
         return;
       }
 
-      setTag(result);
+      setTag(scanned);
+
+      // The native backend reports a real capacity on every read, so the Write
+      // screen can stop assuming without needing a write first.
+      if (capacity != null) setReportedCapacity(capacity);
 
       // Android draws no system UI and gives no feedback of its own, so a
       // successful read is otherwise silent. No-ops on iOS. See lib/feedback.ts.
@@ -101,10 +105,6 @@ export default function ReadScreen() {
 
         <DeviceBanner />
         <NfcStatusCard status={status} />
-        {/* Phase 4: our module answering the same questions as the library,
-            so any disagreement shows up immediately. Removed with the
-            dependency in T10. */}
-        <NativeCapabilities />
 
         {status.kind === 'ready' && !scanning && <Button title="Scan a tag" onPress={handleScan} />}
 

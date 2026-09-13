@@ -15,10 +15,9 @@ import {
 import { compressUri, mimeRecord, uriRecord } from '../../lib/ndefEncode';
 import { URI_PREFIXES } from '../../lib/ndef';
 import { encodeMessage } from '../../lib/ndefEncode';
-import { writeNdef, type WriteOutcome } from '../../lib/nfc';
+import { writeTag, type WriteOutcome } from '../../lib/nfcBackend';
 import { isCancellation, toScanError, type ScanError } from '../../lib/scanError';
 import { toVCard } from '../../lib/vcard';
-import { WritePreflightError } from '../../lib/writeError';
 import { isProfileEmpty, useProfileStore } from '../../store/profile';
 import { useTagStore } from '../../store/tag';
 
@@ -105,16 +104,12 @@ export default function WriteScreen() {
     setWriting(true);
 
     try {
-      const result = await writeNdef(encodeMessage(records));
+      const result = await writeTag(encodeMessage(records));
       setOutcome(result);
       setReportedCapacity(result.capacity);
     } catch (e) {
       // Backing out of the system sheet is not a failure, here as on Read.
       if (isCancellation(e)) return;
-
-      // A pre-flight refusal still learned something about the tag. Keep it:
-      // the refusal itself is evidence the platform reported a capacity.
-      if (e instanceof WritePreflightError) setReportedCapacity(e.reported.capacity);
 
       setError(toScanError(e));
     } finally {

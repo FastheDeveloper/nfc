@@ -12,7 +12,13 @@
     "ios": {
       "bundleIdentifier": "com.nfccard.tap",
       "supportsTablet": false,
-      "appleTeamId": "V993Z3KD7P"
+      "appleTeamId": "V993Z3KD7P",
+      "infoPlist": {
+        "NFCReaderUsageDescription": "TapCard uses NFC to read and write your digital business card to a tag."
+      },
+      "entitlements": {
+        "com.apple.developer.nfc.readersession.formats": ["NDEF", "TAG"]
+      }
     },
     "android": {
       "package": "com.nfccard.tap",
@@ -32,13 +38,7 @@
       ],
       "expo-font",
       "expo-status-bar",
-      "expo-web-browser",
-      [
-        "react-native-nfc-manager",
-        {
-          "nfcPermission": "TapCard uses NFC to read and write your digital business card to a tag."
-        }
-      ]
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

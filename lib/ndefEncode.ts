@@ -11,7 +11,7 @@
  */
 
 import { RTD, TNF, URI_PREFIXES, utf8ToBytes } from './ndef';
-import type { NdefRecord } from 'react-native-nfc-manager';
+import type { NdefRecord } from './nfcTypes';
 
 /**
  * Choose the URI prefix that saves the most bytes.

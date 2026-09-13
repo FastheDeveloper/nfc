@@ -1,3 +1,4 @@
+import CoreNFC
 import ExpoModulesCore
 
 /**
@@ -68,5 +69,67 @@ internal final class StatusFailedException: GenericException<String> {
 internal final class SessionFailedException: GenericException<String> {
   override var reason: String {
     "The NFC session failed: \(param)"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Write-side
+// ---------------------------------------------------------------------------
+
+internal final class InvalidMessageException: Exception {
+  override var reason: String {
+    "Those bytes are not a valid NDEF message, so nothing was sent to the tag."
+  }
+}
+
+/// The tag reports itself locked. Permanent — and note the tag is untouched.
+internal final class TagReadOnlyException: GenericException<Int> {
+  override var reason: String {
+    "This tag is locked read-only and cannot be changed. It holds \(param) bytes."
+  }
+}
+
+/// Our own refusal, carrying the tag's own numbers. Never CoreNFC's error.
+internal final class TagTooSmallException: GenericException<String> {
+  override var reason: String {
+    "Too big for this tag: \(param). Nothing was written."
+  }
+}
+
+internal final class WriteFailedException: GenericException<String> {
+  override var reason: String {
+    "The write did not complete: \(param). The tag may be partly written."
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CoreNFC's own error codes
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared by the read and write sessions.
+ *
+ * The point of translating these is that a user tapping Cancel is **not** a
+ * failure, and JavaScript must be able to tell that apart from a real problem
+ * without matching on strings — the exact trap DEVLOG §1.13 documents in
+ * `react-native-nfc-manager`.
+ */
+@available(iOS 13.0, *)
+internal enum NfcReaderErrors {
+  static func map(_ error: Error) -> Exception {
+    guard let readerError = error as? NFCReaderError else {
+      return SessionFailedException(error.localizedDescription)
+    }
+
+    switch readerError.code {
+    case .readerSessionInvalidationErrorUserCanceled:
+      return UserCancelledException()
+    case .readerSessionInvalidationErrorSessionTimeout:
+      return TimeoutException()
+    case .readerSessionInvalidationErrorSystemIsBusy:
+      return SystemBusyException()
+    default:
+      return SessionFailedException(readerError.localizedDescription)
+    }
   }
 }

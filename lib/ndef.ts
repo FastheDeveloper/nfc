@@ -23,7 +23,7 @@
  */
 
 /** Type-only import: erased at compile time, so this module stays RN-free. */
-import type { NdefRecord } from 'react-native-nfc-manager';
+import type { NdefRecord } from './nfcTypes';
 
 /**
  * Type Name Format — the 3-bit field that says how to interpret a record's

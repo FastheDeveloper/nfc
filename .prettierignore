@@ -1,0 +1,5 @@
+dist
+
+# Frozen copy of a removed dependency, kept as evidence. Reformatting it would
+# make the diff against upstream meaningless. See vendor/*/README.md.
+vendor

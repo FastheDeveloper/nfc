@@ -20,7 +20,7 @@ import { toVCard } from './vcard';
  * shortcutting it.
  */
 /* eslint-disable @typescript-eslint/no-require-imports */
-const libNdef = require('react-native-nfc-manager/ndef-lib');
+const libNdef = require('../vendor/react-native-nfc-manager/ndef-lib');
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 const CARD: Profile = {
