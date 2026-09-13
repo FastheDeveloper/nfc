@@ -2113,10 +2113,16 @@ Everything in this project was built locally: `expo run:ios`, Xcode, CocoaPods, 
 and — twice — a completely full disk. EAS Build is the alternative, and it is worth an honest
 comparison rather than a recommendation.
 
-⚠️ **This section is sourced from Expo's documentation, not from a build we ran.** The project is
-deliberately not linked to an EAS project — DEVLOG §0.3 records skipping `eas build:configure`
-because it creates a cloud project as a side effect, and that should be a decision rather than a
-scaffold artefact. `eas.json` was hand-written instead. Claims below are marked accordingly.
+⚠️ **§5b.1–5b.3 were written from Expo's documentation, not from a build we ran.** §5b.4 onwards
+is sourced from `eas-cli@22.0.0`'s code on disk, which is stronger; a real build is still pending an
+interactive Apple login (§5b.5).
+
+Until 2026-09-13 the project was deliberately **not linked** — §0.3 records skipping
+`eas build:configure` because it creates a cloud project as a side effect, and that should be a
+decision rather than a scaffold artefact. It has now been made deliberately: the user approved
+linking and the build spend, so `app.json` carries
+`extra.eas.projectId = 6c1efc31-c3a8-4349-b62d-12395719ee55` (`@fasdev/tapcard`) and pins
+`owner: "fasdev"`. Claims below are marked by source.
 
 ### The setup we already had
 
@@ -2131,8 +2137,20 @@ scaffold artefact. `eas.json` was hand-written instead. Claims below are marked 
 }
 ```
 
-Three profiles, written by hand in Phase 0 and never used. `eas-cli` 22.0.0 is installed and
-authenticated; `app.json` has no `extra.eas.projectId`, so nothing has been created remotely.
+Three profiles, written by hand in Phase 0 and unused until now. `eas-cli` 22.0.0 is installed and
+authenticated as `fasdev` (Owner).
+
+Two things the first `eas build` surfaced immediately, before it ever reached Apple:
+
+- **`ITSAppUsesNonExemptEncryption` was missing**, which does not fail the build but leaves a manual
+  export-compliance question blocking every submission in App Store Connect. Now declared `false` in
+  `app.json` — accurate: TapCard ships no custom cryptography.
+- **`appVersionSource: "remote"` had no remote versions**, so `buildNumber` was initialised to `1`
+  from the local project. Expected, and worth knowing it happens silently on first use.
+
+It then stopped exactly where it had to: _"Distribution Certificate is not validated for
+non-interactive builds. Credentials are not set up. Run this command again in interactive mode."_
+Apple login and 2FA cannot be automated, which is the honest boundary of this experiment.
 
 ### What this project would hand to EAS cleanly
 
@@ -2221,3 +2239,134 @@ CI pipeline, or anyone who has just watched their disk hit 100% mid-build, the c
 is a strong argument.
 
 **Still unverified**, and worth stating one more time: no EAS build was run for this project.
+
+### 5b.4 — Reading the CLI instead of the docs (2026-09-13)
+
+Before spending a build, I read `eas-cli@22.0.0` on disk rather than trusting the documentation
+page. The mapping is a plain table, and NFC is in it verbatim
+(`build/credentials/ios/appstore/capabilityList.js:284`):
+
+```js
+{
+  // https://developer.apple.com/documentation/bundleresources/entitlements/com_apple_developer_nfc_readersession_formats
+  name: 'NFC Tag Reading',
+  entitlement: 'com.apple.developer.nfc.readersession.formats',
+  capability: CapabilityType.NFC_TAG_READING,
+  // Technically it seems only `TAG` is allowed, but many apps and packages tell users to add `NDEF` as well.
+  validateOptions: createValidateStringArrayOptions(['NDEF', 'TAG']),
+  getSyncOperation: getDefinedValueSyncOperation,
+}
+```
+
+Two things worth keeping:
+
+1. **The allowed values are validated**, and they are exactly the two this project declares. The
+   comment is an admission that `NDEF` is cargo-culted — _"technically it seems only `TAG` is
+   allowed, but many apps and packages tell users to add `NDEF` as well."_ We inherited that pair
+   from the library's config plugin in Phase 1 (§1.9) without knowing it was folklore.
+
+2. **`getDefinedValueSyncOperation`** is the answer to "does it really disable things?" — the
+   operation is driven by whether the key is _defined_ in the entitlements file, in both directions.
+   The two-way sync is not a documentation footnote; it is how the function is written.
+
+**Where the sync actually runs.** The docs say "when you run `eas build`", which implies a build is
+required to observe it. Tracing the call chain says otherwise:
+
+```
+SetUpTargetBuildCredentials.runAsync()      actions/SetUpTargetBuildCredentials.js:19
+  └─ ctx.appStore.ensureBundleIdExistsAsync({ entitlements, … })
+       └─ syncCapabilitiesAsync()            appstore/ensureAppExists.js:104
+            └─ syncCapabilitiesForEntitlementsAsync()
+                 → "Synced capabilities: Enabled: … | Disabled: …"   (or "No updates")
+```
+
+`SetUpTargetBuildCredentials` is the credentials step, not the build step — so
+`eas credentials:configure-build` triggers the identical sync **without consuming a build**. That
+makes the experiment free, which changes what is worth testing.
+
+Also confirmed in source: `EXPO_NO_CAPABILITY_SYNC` is read once
+(`bundleIdCapabilities.js:12`) and short-circuits both the capability sync and the capability
+_identifier_ sync. And the error path names the manual escape hatch directly — a link to the
+Apple console page for that bundle ID, plus the env var.
+
+### 5b.5 — The experiment, and why the obvious version proves nothing
+
+Running EAS against `com.nfccard.tap` cannot demonstrate the headline claim. That App ID already
+has NFC Tag Reading enabled — **we ticked it by hand in §1.9**, which is the afternoon this section
+is about. The sync would report `No updates`, which is a true observation of agreement and a very
+boring one.
+
+So the decisive test needs a bundle identifier that has never existed. Set up as an isolated scratch
+project (deliberately _not_ by editing TapCard's `app.json`, which would risk muddling the real
+app's stored credentials):
+
+- `com.nfccard.tap.eastest`, entitlements the only meaningful content
+- its own cloud project, `@fasdev/eas-capability-test`
+- `eas config` confirms the entitlement survives into the resolved build config
+
+Expected: `Synced capabilities: Enabled: NFC Tag Reading` against a bundle ID nobody ever opened a
+browser for.
+
+### 5b.6 — Observed (2026-09-13, iPhone-free, both runs)
+
+✅ **Both commands ran.** This section is no longer documentation-sourced.
+
+**Run 1 — the real app, `com.nfccard.tap`:**
+
+```
+✔ Bundle identifier registered com.nfccard.tap
+✔ Synced capabilities: No updates
+✔ Synced capability identifiers: No updates
+```
+
+Exactly as predicted in §5b.5, and the prediction is the point: the App ID already carried NFC Tag
+Reading because **we ticked it by hand in §1.9**. `No updates` is EAS confirming our manual work
+was correct, including the `["NDEF", "TAG"]` pair, which passed `validateOptions` without complaint.
+It proves agreement. It cannot prove automation.
+
+**Run 2 — the scratch bundle ID, `com.nfccard.tap.eastest`, which did not exist:**
+
+```
+✔ Bundle identifier registered com.nfccard.tap.eastest
+✔ Synced capabilities: Enabled: NFC Tag Reading
+✔ Synced capability identifiers: No updates
+```
+
+**That is the claim, observed.** A bundle identifier registered from nothing and NFC Tag Reading
+enabled on it, from the entitlements file alone, with no visit to the Apple Developer portal. The
+manual step that cost an afternoon in §1.9 took one line of CLI output — and it cost **no build
+credits**, because §5b.4 established the sync runs at the credentials step.
+
+**The build itself succeeded**, first attempt:
+
+- Build `fa88d8cb-02d4-4357-870a-07db60eaff2e`, artifact published as `.ipa`
+- `buildNumber` incremented 1 → 2 — the `1` came from the failed non-interactive attempt, so
+  `autoIncrement` counted an attempt that never reached Apple. Harmless; worth knowing.
+- Distribution certificate `6B8619E46011CC763186AFE604B81C89`, provisioning profile `9KDR33S2FL`,
+  both created from scratch, both expiring 2027-09-13.
+
+**One ordering decision that paid off.** Running the real build _before_ the scratch test meant run 2
+found an existing certificate and offered to reuse it:
+
+```
+✔ Reuse this distribution certificate?
+Cert ID: 9ZQX8XFN35, Serial number: 6B8619E46011CC763186AFE604B81C89 …
+    📲 Used by: @fasdev/tapcard … yes
+```
+
+Reversing the order would have created a second distribution certificate against Apple's per-account
+limit, for a throwaway app. **Certificates are account-wide; provisioning profiles are per bundle
+ID.** The scratch app got its own profile (`3Q587DLJXA`) and shared the certificate.
+
+**What this does not prove.** The `.ipa` was never installed and no tag was read from an EAS-built
+binary. It is a production (App Store distribution) build, so it cannot be side-loaded. Every NFC
+claim in this project still rests on locally-built binaries on iPhone "Fas".
+
+### 5b.7 — Cleanup owed
+
+Two artefacts exist only to support §5b.6 and should be removed once the article is published:
+
+- Expo project `@fasdev/eas-capability-test`
+- Apple App ID `com.nfccard.tap.eastest` (and its profile `3Q587DLJXA`)
+
+The distribution certificate must **not** be revoked — it is the real app's.

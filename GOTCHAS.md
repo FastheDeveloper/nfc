@@ -318,6 +318,25 @@ capability`** — Apple forbids special capabilities on a _wildcard_ App ID, and
   (`com.apple.developer.nfc.readersession.felica.systemcodes`) is an entitlement EAS does not manage
   for you. Automated capability sync does not mean automated entitlements.
 
+- **`NDEF` in your NFC entitlement is probably folklore.** Everyone writes
+  `"com.apple.developer.nfc.readersession.formats": ["NDEF", "TAG"]`, and `eas-cli`'s own capability
+  table carries the comment _"technically it seems only `TAG` is allowed, but many apps and packages
+  tell users to add `NDEF` as well."_ It validates both because the convention is too widespread to
+  refuse. This project declares both too — inherited from a config plugin, never questioned.
+
+- **The capability sync runs at the credentials step, not the build step.** `eas
+credentials:configure-build --platform ios` registers the App ID and syncs capabilities without
+  consuming a build, which the docs' "when you run `eas build`" phrasing hides.
+
+- **Distribution certificates are account-wide; provisioning profiles are per bundle identifier.**
+  If you are going to configure credentials for a throwaway app alongside a real one, do the real
+  one **first** — then the throwaway offers to reuse the certificate instead of spending one of the
+  few your account may hold.
+
+- **`Synced capabilities: No updates` is not evidence that EAS automates anything.** On an App ID
+  you already configured by hand, that is the only output you can get. The claim is only testable on
+  a bundle identifier that has never existed.
+
 - **Changing a capability invalidates existing provisioning profiles.** They need regenerating
   afterwards — part of the same run on EAS, a manual dance locally.
 

@@ -2,7 +2,7 @@
 
 Working state, not article material.
 
-**Status:** ✅ **T0–T4 verified on hardware · EAS comparison written (unverified by design)** · T5 commit handed over · Kotlin ⛔ never run.
+**Status:** ✅ **T0–T4 verified on hardware · EAS comparison **verified on a real build**** · T5 commit handed over · Kotlin ⛔ never run.
 
 ---
 
@@ -82,5 +82,21 @@ The headline finding: **EAS auto-enables `com.apple.developer.nfc.readersession.
 ID from the entitlements file** — the exact manual step that cost an afternoon in §1.9. And the
 trap: it will also _disable_ a capability that is enabled remotely but missing locally.
 
-- [ ] **Optional:** actually run one, which would mean linking a cloud project and spending build
-      credits. Would move the section from documentation-sourced to observed.
+- [x] **Linked, on the user's explicit approval (2026-09-13).** `@fasdev/tapcard`, project
+      `6c1efc31-c3a8-4349-b62d-12395719ee55`. `app.json` pins `owner: "fasdev"` and now declares
+      `ITSAppUsesNonExemptEncryption: false`.
+- [x] **Read `eas-cli@22.0.0`'s source** rather than trusting the docs — DEVLOG §5b.4. The NFC
+      entry is in `capabilityList.js` verbatim, the sync is two-way by construction, and it runs
+      from the **credentials** step, so `eas credentials:configure-build` syncs capabilities without
+      spending a build.
+- [x] **Scratch project built for the decisive test** — `com.nfccard.tap.eastest`, a bundle ID that
+      has never existed, isolated from TapCard's credentials.
+- [x] ✅ **Both interactive runs done — §5b is observed** (DEVLOG §5b.6). Real app:
+      `Synced capabilities: No updates`, as predicted, because §1.9 had already done it by hand.
+      Fresh bundle ID `com.nfccard.tap.eastest`: **`Synced capabilities: Enabled: NFC Tag Reading`**
+      — the claim, proven, at zero build cost.
+- [x] **Production build succeeded first attempt** — `fa88d8cb`, `.ipa` published. Never installed:
+      App Store distribution cannot be side-loaded, so no NFC claim rests on it.
+- [ ] **Cleanup owed** (DEVLOG §5b.7): delete `@fasdev/eas-capability-test` and App ID
+      `com.nfccard.tap.eastest`. Do **not** revoke the distribution certificate — it is the real
+      app's.

@@ -2,6 +2,7 @@
   "expo": {
     "name": "TapCard",
     "slug": "tapcard",
+    "owner": "fasdev",
     "version": "1.0.0",
     "scheme": "tapcard",
     "platforms": ["ios", "android"],
@@ -14,7 +15,8 @@
       "supportsTablet": false,
       "appleTeamId": "V993Z3KD7P",
       "infoPlist": {
-        "NFCReaderUsageDescription": "TapCard uses NFC to read and write your digital business card to a tag."
+        "NFCReaderUsageDescription": "TapCard uses NFC to read and write your digital business card to a tag.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {
         "com.apple.developer.nfc.readersession.formats": ["NDEF", "TAG"]
@@ -43,6 +45,12 @@
     "experiments": {
       "typedRoutes": true,
       "tsconfigPaths": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "6c1efc31-c3a8-4349-b62d-12395719ee55"
+      }
     }
   }
 }
