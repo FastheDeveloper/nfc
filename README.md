@@ -4,10 +4,12 @@ An NFC digital business card app for iOS and Android, built with Expo + React Na
 Write your contact details to a physical NFC tag as a URL or a vCard, and read any NDEF
 tag back in human-readable form.
 
-This repo is the worked example behind a freeCodeCamp article. Two companion documents
+This repo is the worked example behind a freeCodeCamp article. The companion documents
 are part of the deliverable, not notes:
 
-- **[DEVLOG.md](./DEVLOG.md)** — every command, every error verbatim, every decision
+- **[GOTCHAS.md](./GOTCHAS.md)** — every trap, symptom first. Start here if something is broken
+- **[PROJECT_FACTS.md](./PROJECT_FACTS.md)** — the distilled source the article is drafted from
+- **[DEVLOG.md](./DEVLOG.md)** — every command, every error verbatim, every decision, in order
 - **[PLATFORM-NOTES.md](./PLATFORM-NOTES.md)** — the running iOS vs Android comparison
 
 ## Requirements
