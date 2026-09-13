@@ -9,6 +9,8 @@
 
 import type { NdefRecord } from './nfcTypes';
 
+import { Platform } from 'react-native';
+
 import NfcNative from '../modules/nfc-native/src/NfcNativeModule';
 import type { NativeTagResult, NativeWriteResult } from '../modules/nfc-native/src/NfcNative.types';
 import { describeNativeError } from './nativeError';
@@ -36,6 +38,9 @@ export async function readTagNative(
     tag: {
       id: result.id,
       tech: result.tech,
+      // Android only. Tag Info has rendered this row since Phase 2 and has
+      // never had a value to put in it.
+      techTypes: result.techTypes,
       // Our Swift returns a real capacity, so unlike the library's read path
       // this can populate `maxSize` — the field Tag Info has been rendering as
       // "Not reported" since Phase 2.
@@ -54,6 +59,19 @@ export async function readTagNative(
  * Matching on the unwrapped code rather than the message. `lib/nativeError.ts`
  * digs it out from under Expo's `FunctionCallException` wrapper — see §T1a.
  */
+/**
+ * Stop an in-flight scan.
+ *
+ * Android only, and the asymmetry is the point: iOS's system sheet owns
+ * cancelling, so the function does not exist in the Swift module at all.
+ * Calling it there would fail to resolve on the bridge, which is why this
+ * guards on platform rather than relying on a no-op.
+ */
+export async function cancelScanNative(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await NfcNative.cancelScan();
+}
+
 export function isNativeCancellation(error: unknown): boolean {
   return describeNativeError(error).code === 'UserCancelledException';
 }

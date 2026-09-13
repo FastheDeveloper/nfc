@@ -24,8 +24,16 @@ export type NativeNdefRecord = {
 export type NativeTagResult = {
   /** Uppercase hex, no separators. */
   id: string;
-  /** `mifare` | `iso7816` | `iso15693` | `felica` on iOS; a tech list on Android. */
+  /** `mifare` | `iso7816` | `iso15693` | `felica` on iOS; the first tech on Android. */
   tech: string;
+  /**
+   * Every technology the tag supports. **Android only.**
+   *
+   * iOS reports a single family name and has no equivalent — the difference
+   * PLATFORM-NOTES §5 recorded from documentation in Phase 2 and can now be
+   * observed.
+   */
+  techTypes?: string[];
   /** 1 not-supported · 2 read-write · 3 read-only. */
   status: NativeNdefStatus;
   /**

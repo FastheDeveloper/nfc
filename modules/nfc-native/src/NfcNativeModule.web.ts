@@ -31,6 +31,10 @@ class NfcNativeModule extends NativeModule<Record<never, never>> {
   async writeTag(): Promise<never> {
     throw new Error('NFC is not available on the web.');
   }
+
+  async cancelScan(): Promise<void> {
+    // Nothing to cancel; there was never a scan.
+  }
 }
 
 export default registerWebModule(NfcNativeModule, 'NfcNativeModule');

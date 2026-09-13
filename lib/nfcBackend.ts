@@ -20,7 +20,7 @@
 import * as Device from 'expo-device';
 
 import { readCapabilities } from './nfcCapabilities';
-import { readTagNative, writeTagNative } from './nfcNative';
+import { cancelScanNative, readTagNative, writeTagNative } from './nfcNative';
 import type { RawTag } from './tagFacts';
 
 /**
@@ -111,13 +111,11 @@ export async function writeTag(bytes: number[]): Promise<WriteOutcome> {
 /**
  * Abort an in-flight scan.
  *
- * ⚠️ A no-op on the native backend, and knowingly so. On iOS the user cancels
- * through the system sheet, which our session already handles — there is
- * nothing for an app-drawn button to do. **Android is the gap**: it draws no
- * system UI, so the app must offer its own way out, and our module has no
- * cancel entry point yet. That lands with T3, and this comment is here so it
- * is not discovered as a mystery instead.
+ * Android only, by necessity rather than omission. iOS cancels through the
+ * system sheet, which our session already handles, so the Swift module has no
+ * such function — `cancelScanNative` guards on platform. Android draws no
+ * system UI at all, so reader mode stays on until the app switches it off.
  */
 export async function cancelScan(): Promise<void> {
-  // Intentionally empty until T3.
+  await cancelScanNative();
 }

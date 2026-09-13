@@ -50,6 +50,15 @@ declare class NfcNativeModule extends NativeModule<Record<never, never>> {
    * `InvalidMessageException`, or `WriteFailedException`.
    */
   writeTag(alertMessage: string, bytes: number[]): Promise<NativeWriteResult>;
+
+  /**
+   * Stop an in-flight scan.
+   *
+   * **Android only.** iOS does not implement it, because the system sheet owns
+   * cancelling there — call it and the bridge will not find the function. See
+   * `lib/nfcBackend.ts`, which guards on platform.
+   */
+  cancelScan(): Promise<void>;
 }
 
 export default requireNativeModule<NfcNativeModule>('NfcNative');
