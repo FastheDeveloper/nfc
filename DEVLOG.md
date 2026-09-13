@@ -2362,11 +2362,47 @@ ID.** The scratch app got its own profile (`3Q587DLJXA`) and shared the certific
 binary. It is a production (App Store distribution) build, so it cannot be side-loaded. Every NFC
 claim in this project still rests on locally-built binaries on iPhone "Fas".
 
-### 5b.7 — Cleanup owed
+### 5b.7 — Cleanup, done (2026-09-13)
 
-Two artefacts exist only to support §5b.6 and should be removed once the article is published:
+**Apple side removed; Expo side deliberately kept.**
 
-- Expo project `@fasdev/eas-capability-test`
-- Apple App ID `com.nfccard.tap.eastest` (and its profile `3Q587DLJXA`)
+```
+com.nfccard.tap  present
+deleted bundle id com.nfccard.tap.eastest
 
-The distribution certificate must **not** be revoked — it is the real app's.
+VERIFY
+  com.nfccard.tap.eastest: gone
+  com.nfccard.tap: intact
+```
+
+The App ID and its profile `3Q587DLJXA` are gone. The distribution certificate was never touched —
+it is shared with the real app, which is why §5b.6 ran the builds in the order it did.
+
+`@fasdev/eas-capability-test` **stays on Expo**, on purpose. Its credentials page is the surviving
+record of the experiment: it still shows `com.nfccard.tap.eastest` configured, which documents what
+was tested after the Apple-side identifier no longer exists.
+
+There is no `eas` command for deleting an App ID, so this went through `@expo/apple-utils` — the
+library bundled inside `eas-cli` — reusing its authentication. Two things that cost time:
+
+1. **`BundleId`'s instance `deleteAsync` requires `{ id }` passed explicitly**, despite being a
+   method on an object that already knows its own id. `await bundleId.deleteAsync()` throws
+   `Cannot destructure property 'id' of 'undefined'`. It wants
+   `await bundleId.deleteAsync({ id: bundleId.id })`.
+
+2. **`getBundleIdCapabilitiesAsync()` reads already-loaded relationships; it does not fetch.**
+   `findAsync` does not populate them, so a safety check built on it reported `(none)` for _both_
+   identifiers and would have raised a false alarm about the real app losing NFC. The fetching
+   accessor is `getOrFetchBundleIdCapabilitiesAsync()`, which gives the real answer:
+
+```
+com.nfccard.tap: 2PT643SD6R_IN_APP_PURCHASE, 2PT643SD6R_NFC_TAG_READING
+com.nfccard.tap.eastest: NOT PRESENT
+```
+
+**`NFC_TAG_READING` survived the cleanup**, verified after the fact rather than assumed — which is
+the only reason the wrong reading was caught at all.
+
+One boundary worth recording: Apple's cached session expires within minutes, and the only
+non-interactive way past it is reading the Apple ID password out of the macOS Keychain. Every step
+here that touched Apple needed a human at the keyboard.

@@ -337,6 +337,12 @@ credentials:configure-build --platform ios` registers the App ID and syncs capab
   you already configured by hand, that is the only output you can get. The claim is only testable on
   a bundle identifier that has never existed.
 
+- **A safety check can lie.** `@expo/apple-utils`'s `getBundleIdCapabilitiesAsync()` reads
+  relationships that are already loaded and does not fetch them, so after a plain `findAsync` it
+  returns an empty list for an App ID that plainly has capabilities. A "did I break the real app?"
+  check built on it reports `(none)` for everything and proves nothing. Use
+  `getOrFetchBundleIdCapabilitiesAsync()`.
+
 - **Changing a capability invalidates existing provisioning profiles.** They need regenerating
   afterwards — part of the same run on EAS, a manual dance locally.
 

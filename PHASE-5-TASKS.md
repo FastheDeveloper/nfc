@@ -97,6 +97,7 @@ trap: it will also _disable_ a capability that is enabled remotely but missing l
       — the claim, proven, at zero build cost.
 - [x] **Production build succeeded first attempt** — `fa88d8cb`, `.ipa` published. Never installed:
       App Store distribution cannot be side-loaded, so no NFC claim rests on it.
-- [ ] **Cleanup owed** (DEVLOG §5b.7): delete `@fasdev/eas-capability-test` and App ID
-      `com.nfccard.tap.eastest`. Do **not** revoke the distribution certificate — it is the real
-      app's.
+- [x] ✅ **Cleanup done** (DEVLOG §5b.7). App ID `com.nfccard.tap.eastest` and its profile deleted
+      via `@expo/apple-utils`; `com.nfccard.tap` verified to still hold `NFC_TAG_READING`; the
+      distribution certificate untouched. `@fasdev/eas-capability-test` **kept on Expo on purpose**
+      as the record of the experiment.
