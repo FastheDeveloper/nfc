@@ -133,3 +133,27 @@ internal enum NfcReaderErrors {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Locking
+// ---------------------------------------------------------------------------
+
+/**
+ * Not a failure, and nothing was changed.
+ *
+ * Distinct from `LockFailedException` on purpose: "already locked" means the
+ * tag is in exactly the state you asked for, while "lock failed" means an
+ * irreversible operation went wrong. Collapsing them would tell a user
+ * something alarming about a tag that is perfectly fine.
+ */
+internal final class AlreadyLockedException: Exception {
+  override var reason: String {
+    "This tag is already permanently read-only. Nothing was changed."
+  }
+}
+
+internal final class LockFailedException: GenericException<String> {
+  override var reason: String {
+    "The tag could not be locked: \(param). Its state is unknown — read it before relying on it."
+  }
+}

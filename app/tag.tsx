@@ -1,5 +1,5 @@
-import { Stack } from 'expo-router';
-import { Platform, ScrollView, Text, View } from 'react-native';
+import { Stack, useRouter } from 'expo-router';
+import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import { Collapsible } from '../components/Collapsible';
 import { Container } from '../components/Container';
@@ -18,6 +18,7 @@ import { useTagStore } from '../store/tag';
  * of a capacity figure is a finding about CoreNFC, not a rendering accident.
  */
 export default function TagScreen() {
+  const router = useRouter();
   const tag = useTagStore((s) => s.tag);
   const views = useTagStore((s) => s.views);
   const scannedAt = useTagStore((s) => s.scannedAt);
@@ -104,6 +105,15 @@ export default function TagScreen() {
             ))
           )}
         </Section>
+
+        {/* Reached from here rather than a tab: nothing destructive should be
+            one tap from the app's home screen. */}
+        <TouchableOpacity
+          accessibilityRole="button"
+          onPress={() => router.push('/lock')}
+          className={styles.lockLink}>
+          <Text className={styles.lockLinkText}>Lock this tag permanently…</Text>
+        </TouchableOpacity>
 
         <Section title="Raw">
           <View className={styles.card}>
@@ -204,4 +214,6 @@ const styles = {
   emptyTitle: 'text-lg font-semibold text-neutral-900 dark:text-neutral-50',
   emptyBody: 'text-sm text-neutral-500 dark:text-neutral-400 text-center',
   emptyRecord: 'text-sm text-neutral-500 dark:text-neutral-400',
+  lockLink: 'rounded-2xl border border-red-200 dark:border-red-900 px-4 py-3 items-center',
+  lockLinkText: 'text-sm font-medium text-red-700 dark:text-red-400',
 };

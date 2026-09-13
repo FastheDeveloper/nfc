@@ -20,7 +20,13 @@
 import * as Device from 'expo-device';
 
 import { readCapabilities } from './nfcCapabilities';
-import { cancelScanNative, readTagNative, writeTagNative } from './nfcNative';
+import {
+  cancelScanNative,
+  lockTagNative,
+  readTagNative,
+  writeTagNative,
+  type NativeLockOutcome,
+} from './nfcNative';
 import type { RawTag } from './tagFacts';
 
 /**
@@ -118,4 +124,15 @@ export async function writeTag(bytes: number[]): Promise<WriteOutcome> {
  */
 export async function cancelScan(): Promise<void> {
   await cancelScanNative();
+}
+
+/**
+ * Make a tag permanently read-only.
+ *
+ * Deliberately the last function in this file, and deliberately the only one
+ * whose doc comment says this: **it cannot be undone.** The chip's lock bits
+ * are burned. No app on any phone can write to it again.
+ */
+export async function lockTag(): Promise<NativeLockOutcome> {
+  return lockTagNative();
 }

@@ -315,6 +315,23 @@ when a tag is pulled away mid-read.
 | Read-only / locked tag    | ⏳      | ⏳  |
 | Unformatted tag           | ⏳      | ⏳  |
 
+### Locking, and the one thing both platforms agree on
+
+|                                     | Android                      | iOS                                |
+| ----------------------------------- | ---------------------------- | ---------------------------------- |
+| Call                                | ⛔ `Ndef.makeReadOnly()`     | ✅ `NFCNDEFTag.writeLock`          |
+| Reversible                          | ❌                           | ❌                                 |
+| Reports "already locked" distinctly | ⛔ derived from `isWritable` | ✅ `queryNDEFStatus` → `.readOnly` |
+| Verifiable afterwards               | ⛔ re-read `isWritable`      | ✅ re-read the status              |
+
+**Observed on iOS 2026-09-13**: a locked NTAG213 reports `status 3` on every subsequent read, and
+the write path refuses it in pre-flight with `TagReadOnlyException` — nothing is sent to the tag.
+
+This is the rare case where the platforms are genuinely symmetrical: one call, irreversible, with
+the state observable afterwards. The asymmetry that remains is the same one as everywhere else —
+iOS answers "is this locked?" directly through a status query, while Android leaves you to infer it
+from `isWritable` on a connected tag.
+
 ## 8. Writing the native layer ourselves
 
 Phases 1–3 saw these platforms through `react-native-nfc-manager`. Phase 4 replaced it with our own

@@ -1948,3 +1948,159 @@ instead of an issue on someone else's tracker.
 **Still open, all behind an Android device:** the Kotlin read path (T3), formatting (T6), a cancel
 entry point for Android — where, unlike iOS, the app must draw its own way out — and every Android
 column in PLATFORM-NOTES.
+
+---
+
+## Phase 5 — Locking a tag, permanently
+
+Every earlier phase was reversible. A write replaces a tag's contents; you can always write
+something else. This one burns the chip's lock bits — a hardware change. The tag can be read
+forever and never written again, by any app, on any phone. There is no undo, no factory reset, and
+no clever command that puts it back.
+
+### 5.1 Why build it at all
+
+Because it is what real deployments do. An event badge, a product-authentication seal, a museum
+label — anything handed to the public — gets locked so the next person with a phone cannot
+overwrite it. A tag you can rewrite is a tag anyone can rewrite.
+
+It is also the honest end of the project: the one operation where getting the UX wrong destroys
+something physical rather than producing an error you can read and retry.
+
+### 5.2 The gate is the feature
+
+The native call is four lines. `NFCNDEFTag.writeLock` on iOS, `Ndef.makeReadOnly()` on Android.
+Everything interesting in this phase is what happens _before_ it.
+
+Two taps guards a write, and two taps is right for a write — a write is reversible, you simply
+write something else. It is plainly not enough here. So the gate borrows the pattern GitHub uses
+for deleting a repository: **type the thing's name to prove you know which thing you are
+destroying.**
+
+That specific choice matters more than the friction it adds:
+
+> A confirmation dialog measures willingness. Typing the identifier measures **attention**. The
+> failure mode worth designing against is not someone who wants to lock a tag — it is someone who
+> wants to lock a tag and is holding the wrong one.
+
+Which is also why the screen refuses to arm until you have **read the tag first**, and shows what
+is currently on it. An unintended chip announces itself before it can be spent.
+
+`lib/lock.ts` holds the whole decision as a pure function, so the rules are tested without a device
+and without destroying anything:
+
+```ts
+export function lockGate(tagId, status, typed): LockGate {
+  if (!tagId) return { state: 'no-tag' };
+  if (status === NDEF_STATUS.READ_ONLY) return { state: 'already-locked' };
+  if (status === NDEF_STATUS.NOT_SUPPORTED) return { state: 'not-lockable' };
+
+  return normaliseTagId(typed) === normaliseTagId(tagId)
+    ? { state: 'armed', tagId }
+    : { state: 'needs-confirmation', expected: tagId };
+}
+```
+
+Order matters in that function. `already-locked` is checked **before** the typed confirmation, so
+nobody can type their way into "locking" a tag that is already locked and be told it worked. It did
+not work; there was nothing to do.
+
+### 5.3 A test that was right while the code was wrong
+
+One of the eleven tests was written as:
+
+```ts
+it('refuses a tag that is not NDEF at all', () => {
+  expect(lockGate(TAG, NDEF_STATUS.NOT_SUPPORTED, TAG).state).toBe('armed');
+});
+```
+
+The name says _refuses_; the assertion says _armed_. It passed, because the code did arm.
+
+The name was right and the code was wrong. `writeLock` is a method on `NFCNDEFTag` — locking the
+raw memory of a non-NDEF chip is a different operation against a different interface, and offering
+it here would be claiming to do something we do not do. Fixed with a `not-lockable` state.
+
+Worth recording because of how it was caught: not by a failing test, but by **reading a passing
+test's name next to its assertion**. A test that agrees with the wrong code is invisible to a test
+run.
+
+### 5.4 Distinguishing "nothing to do" from "something went wrong"
+
+`AlreadyLockedException` is deliberately separate from `LockFailedException`, on both platforms:
+
+```swift
+internal final class AlreadyLockedException: Exception {
+  override var reason: String {
+    "This tag is already permanently read-only. Nothing was changed."
+  }
+}
+```
+
+Collapsing them would tell a user something alarming about a tag that is in exactly the state they
+asked for. The UI renders it **green**, with no lock button — because the correct response to
+"already locked" is reassurance, not a retry affordance.
+
+This is the same principle as §3.3's rule about never throwing a dependency's error type: two
+different situations must not arrive as one signal, and the moment you want them apart is the
+moment something is going wrong.
+
+### 5.5 Verify, because you cannot retry to find out
+
+Both implementations re-read the tag's status **after** the lock and report whether it actually
+took. That check exists in the write path too, but it carries different weight here:
+
+> A failed write is recoverable — write again. A lock that reports success and did not happen sends
+> a tag into the world believing it is protected, and you cannot retry to find out, because
+> **retrying is itself the destructive act.**
+
+So an unverified lock is not reported as a soft warning the way an unverified write is. The copy
+says the chip's state is unknown and to read it before relying on it.
+
+### 5.6 A separate class, not a flag
+
+`NfcLockSession` duplicates a fair amount of `NfcWriteSession` — the session setup, the delegate,
+the settle-exactly-once discipline. That duplication is deliberate.
+
+The alternative was a `lock: Bool` on the write session. A boolean parameter that sometimes
+destroys the tag is exactly the kind of thing that gets passed by accident from a refactor three
+months later, by someone who has never read this file. Two call sites, two intentions, no shared
+branch that can be reached from the wrong place.
+
+Sometimes the right response to "this is nearly the same code" is to let it be nearly the same
+code.
+
+### 5.7 Verified on hardware
+
+2026-09-13, a nominated sacrificial NTAG213 on iPhone "Fas":
+
+| Check                                                           | Result                               |
+| --------------------------------------------------------------- | ------------------------------------ |
+| Gate refuses a wrong or partial identifier                      | ✅ button stays disabled             |
+| Gate arms on an exact match                                     | ✅                                   |
+| Lock applies and self-verifies                                  | ✅ "Locked, and confirmed read-only" |
+| Re-reading reports **Locked — read-only, permanently**          | ✅                                   |
+| Locking again reports **Already locked**, in green, no button   | ✅                                   |
+| Writing to it refuses in pre-flight with `TagReadOnlyException` | ✅ nothing sent to the tag           |
+
+That last row is the one worth having. It proves the lock is a real hardware state CoreNFC reports
+back — not a flag the app is remembering — and that the refusal happens _before_ a write is
+attempted.
+
+⛔ The Kotlin mirrors all of this and has never been run.
+
+### 5.8 What Phase 5 shipped
+
+|                                               |                                                    |
+| --------------------------------------------- | -------------------------------------------------- |
+| `lib/lock.ts`                                 | The gate and the verification rule, pure. 11 tests |
+| `modules/nfc-native/ios/NfcLockSession.swift` | Ask → refuse → lock → verify                       |
+| `NfcExceptions.swift`                         | `AlreadyLockedException`, `LockFailedException`    |
+| Kotlin                                        | `Ndef.makeReadOnly()`, same shape ⛔               |
+| `app/lock.tsx`                                | Read-first, type-to-arm, plain language            |
+
+**293 tests**, `tsc`, ESLint and Prettier clean.
+
+Deliberately not done: the **EAS build comparison** listed under Phase 5 in the README. It is a
+separate piece of work with no NFC content, and belongs with the article's "how would I ship this"
+material rather than here.

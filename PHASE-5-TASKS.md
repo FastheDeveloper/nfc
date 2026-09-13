@@ -1,0 +1,79 @@
+# Phase 5 — Locking a tag, permanently
+
+Working state, not article material.
+
+**Status:** ✅ **T0–T4 done, verified on hardware 2026-09-13.** T5 (commit) handed over. Kotlin ⛔ never run.
+
+---
+
+## ⚠️ This phase cannot be undone
+
+Every earlier phase was reversible. A write replaces a tag's contents; you can always write
+something else. **Locking is different: it is a one-way hardware change.** The chip's lock bits are
+burned, and no software — ours, Apple's, or anyone's — can restore them. A locked tag can be read
+forever and never written again.
+
+So the rules for this phase:
+
+- **A specific chip must be nominated as sacrificial before anyone taps anything.** Not "one of the
+  spares" — a physical chip, identified, that you have decided to spend.
+- **The confirmation must be proportionate to the consequence.** Two taps is what we use for a
+  write, which is reversible. This needs more.
+- **Never lock a tag that holds something you have not already written elsewhere.**
+- The app must show what is currently on the tag _before_ asking, so nobody locks the wrong chip.
+
+## Why build it at all
+
+Because it is what real deployments do. An event badge, a product-authentication seal, a museum
+label — anything handed to the public — gets locked so it cannot be overwritten by the next person
+with a phone. A tag you can rewrite is a tag anyone can rewrite.
+
+It is also the honest end of the article: the one operation where getting the UX wrong destroys
+something physical.
+
+---
+
+## Tasks
+
+### T0 — The native lock ✅
+
+- [x] Swift: `NfcLockSession` — query status → confirm writable → `writeLock` → verify it took
+- [x] Typed exceptions: already locked, not lockable, lock failed
+- [x] ⛔ Kotlin: `Ndef.makeReadOnly()`, same shape
+- **Test:** ⏳ needs a nominated chip
+
+### T1 — The rules, pure ✅ (11 tests)
+
+- [x] `lib/lock.ts` — confirmation gate, verification of the resulting status
+- [x] Typing the tag's own UID is what unlocks the button (the GitHub-delete pattern)
+- **Test:** `pnpm test`
+
+### T2 — The screen ✅
+
+- [x] Read the tag first and show what is on it
+- [x] Type the UID to arm; a single button press is never enough
+- [x] Plain language: permanent, cannot be undone, the tag can never be written again
+- **Test:** ⏳ on the nominated chip
+
+### T3 — Verify the lock took ✅ **confirmed on a sacrificial chip**
+
+- [x] Re-read after locking: NDEF status must report read-only
+- [x] Attempting a write afterwards must fail with our `read-only` kind
+- **Test:** ⏳ the same chip, twice
+
+### T4 — Documentation ✅
+
+- [x] DEVLOG §5, PLATFORM-NOTES, GOTCHAS, the handbook's closing chapter
+- [x] README — tick Phase 5
+
+### T5 — Commit
+
+- [ ] Message handed over
+
+---
+
+## Deferred
+
+**EAS build comparison** — listed under Phase 5 in the README, but it is a separate piece of work
+with no NFC content. Worth doing for the article's "how would I ship this" section; not part of
+locking.

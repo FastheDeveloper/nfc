@@ -68,3 +68,20 @@ export type NativeWriteResult = {
   /** What the tag actually held afterwards. */
   readBack: NativeNdefRecord[];
 };
+
+/** The result of a lock attempt. Irreversible either way. */
+export type NativeLockResult = {
+  id: string;
+  tech: string;
+  /** NDEF status read back *after* the attempt. 3 means it took. */
+  statusAfter: NativeNdefStatus;
+  capacity: number;
+  /**
+   * Whether the tag confirmed read-only afterwards.
+   *
+   * Unlike a write, a false here is not a soft warning — if the status did not
+   * come back read-only, the chip's state is unknown, and you cannot retry to
+   * find out because retrying is the destructive act.
+   */
+  verified: boolean;
+};

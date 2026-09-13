@@ -1,6 +1,6 @@
 import { NativeModule, requireNativeModule } from 'expo';
 
-import type { NativeTagResult, NativeWriteResult } from './NfcNative.types';
+import type { NativeLockResult, NativeTagResult, NativeWriteResult } from './NfcNative.types';
 
 /**
  * The raw bridge surface.
@@ -50,6 +50,14 @@ declare class NfcNativeModule extends NativeModule<Record<never, never>> {
    * `InvalidMessageException`, or `WriteFailedException`.
    */
   writeTag(alertMessage: string, bytes: number[]): Promise<NativeWriteResult>;
+
+  /**
+   * Make a tag permanently read-only.
+   *
+   * **Irreversible.** Rejects with `AlreadyLockedException` when there was
+   * nothing to do, which is deliberately distinct from `LockFailedException`.
+   */
+  lockTag(alertMessage: string): Promise<NativeLockResult>;
 
   /**
    * Stop an in-flight scan.

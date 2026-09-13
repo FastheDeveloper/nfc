@@ -45,6 +45,9 @@ internal class NfcReaderSession(
   /** Non-null for a write; null for a read. */
   private var messageToWrite: NdefMessage? = null
 
+  /** True for a lock. Irreversible, so it is its own flag rather than a mode. */
+  private var lockRequested = false
+
   private val flags =
     NfcAdapter.FLAG_READER_NFC_A or
       NfcAdapter.FLAG_READER_NFC_B or
@@ -56,6 +59,17 @@ internal class NfcReaderSession(
       NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
 
   fun read(promise: Promise) = start(promise, null)
+
+  /**
+   * Make the tag permanently read-only. ⛔ Never run on a device.
+   *
+   * Same order as the Swift: ask first, refuse an already-locked tag distinctly
+   * from a failure, then verify by re-reading rather than trusting the call.
+   */
+  fun lock(promise: Promise) {
+    lockRequested = true
+    start(promise, null)
+  }
 
   fun write(bytes: ByteArray, promise: Promise) {
     val message =
@@ -98,6 +112,35 @@ internal class NfcReaderSession(
 
       val status = NfcTagInfo.status(ndef)
       val capacity = ndef.maxSize
+
+      if (lockRequested) {
+        if (!ndef.isWritable) {
+          // Already read-only: the tag is in exactly the state requested, which
+          // is not a failure and must not be reported as one.
+          stopReaderMode()
+          rejectOnce(AlreadyLockedException())
+          return
+        }
+
+        ndef.makeReadOnly()
+
+        // Verify by asking again rather than trusting the call, for the same
+        // reason as the Swift: you cannot retry to find out, because retrying
+        // is itself the destructive act.
+        val lockedNow = !ndef.isWritable
+
+        stopReaderMode()
+        resolveOnce(
+          mapOf(
+            "id" to NfcTagInfo.identifier(tag),
+            "tech" to (NfcTagInfo.techTypes(tag).firstOrNull() ?: "unknown"),
+            "statusAfter" to if (lockedNow) 3 else 2,
+            "capacity" to capacity,
+            "verified" to lockedNow,
+          )
+        )
+        return
+      }
 
       messageToWrite?.let { message ->
         // Ask before acting, same order as the Swift: refusing leaves the tag

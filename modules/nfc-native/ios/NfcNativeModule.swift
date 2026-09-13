@@ -29,6 +29,10 @@ public class NfcNativeModule: Module {
   /// Same retention reasoning as `readSession`, for the write side.
   private var writeSession: Any?
 
+  /// And again for locking, which gets its own session for the same reason it
+  /// gets its own class: no shared branch can accidentally destroy a tag.
+  private var lockSession: Any?
+
   public func definition() -> ModuleDefinition {
     Name("NfcNative")
 
@@ -108,6 +112,24 @@ public class NfcNativeModule: Module {
       let session = NfcWriteSession()
       self.writeSession = session
       session.start(alertMessage: alertMessage, bytes: bytes, promise: promise)
+    }
+
+    /**
+     * Make a tag permanently read-only.
+     *
+     * Irreversible. The gate that decides whether this may be called at all
+     * lives in `lib/lock.ts`, not here — the native side does the deed, the
+     * TypeScript side is responsible for being sure.
+     */
+    AsyncFunction("lockTag") { (alertMessage: String, promise: Promise) in
+      guard #available(iOS 13.0, *) else {
+        promise.reject(NfcUnavailableException())
+        return
+      }
+
+      let session = NfcLockSession()
+      self.lockSession = session
+      session.start(alertMessage: alertMessage, promise: promise)
     }
   }
 }

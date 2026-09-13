@@ -102,6 +102,20 @@ class NfcNativeModule : Module() {
     }
 
     /**
+     * Make a tag permanently read-only. ⛔ Never run.
+     *
+     * `Ndef.makeReadOnly()` is Android's equivalent of CoreNFC's `writeLock`,
+     * and carries the same finality. The decision to call it is made in
+     * `lib/lock.ts`; this only performs it.
+     */
+    AsyncFunction("lockTag") { _: String, promise: Promise ->
+      val adapter = adapter() ?: throw NfcUnavailableException()
+      if (!adapter.isEnabled) throw NfcDisabledException()
+
+      NfcReaderSession(adapter, requireActivity()).also { session = it }.lock(promise)
+    }
+
+    /**
      * Stop an in-flight scan.
      *
      * **No iOS counterpart.** There, the system sheet owns cancelling. Here the
@@ -160,3 +174,6 @@ internal class WriteFailedException(detail: String) :
 
 internal class SessionFailedException(detail: String) :
   CodedException("The NFC session failed: $detail.")
+
+internal class AlreadyLockedException :
+  CodedException("This tag is already permanently read-only. Nothing was changed.")

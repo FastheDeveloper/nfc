@@ -12,7 +12,11 @@ import type { NdefRecord } from './nfcTypes';
 import { Platform } from 'react-native';
 
 import NfcNative from '../modules/nfc-native/src/NfcNativeModule';
-import type { NativeTagResult, NativeWriteResult } from '../modules/nfc-native/src/NfcNative.types';
+import type {
+  NativeLockResult,
+  NativeTagResult,
+  NativeWriteResult,
+} from '../modules/nfc-native/src/NfcNative.types';
 import { describeNativeError } from './nativeError';
 import type { RawTag } from './tagFacts';
 
@@ -106,5 +110,31 @@ export async function writeTagNative(
     verifyNote: result.verified
       ? null
       : `The tag read back ${result.readBack.length} record(s) that did not match what was sent.`,
+  };
+}
+
+export type NativeLockOutcome = {
+  tagId: string;
+  statusAfter: NativeTagResult['status'];
+  capacity: number | null;
+  verified: boolean;
+};
+
+/**
+ * Make a tag permanently read-only.
+ *
+ * The only irreversible call in the app. Whether it *should* be called is
+ * decided by `lockGate()` in `lib/lock.ts`; this only performs it.
+ */
+export async function lockTagNative(
+  alertMessage = 'Hold your iPhone near the tag to lock it.'
+): Promise<NativeLockOutcome> {
+  const result: NativeLockResult = await NfcNative.lockTag(alertMessage);
+
+  return {
+    tagId: result.id,
+    statusAfter: result.statusAfter,
+    capacity: result.capacity > 0 ? result.capacity : null,
+    verified: result.verified,
   };
 }

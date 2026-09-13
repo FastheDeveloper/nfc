@@ -261,6 +261,36 @@ capability`** — Apple forbids special capabilities on a _wildcard_ App ID, and
   when the native project was generated. The symptom is Gradle reporting `project not found` for a
   module that is plainly in `modules/`.
 
+## Locking a tag
+
+- **`writeLock` / `makeReadOnly` cannot be undone, and nothing in the API hints at that.** It reads
+  like any other call. It burns the chip's lock bits: the tag can be read forever and never written
+  again, by any app, on any phone. Treat the call site as you would `rm -rf`.
+
+- **Two taps is not enough confirmation for an irreversible operation.** Two taps guards a write,
+  which is reversible. For this, require the user to **type the tag's identifier** — the pattern
+  GitHub uses for deleting a repository. A dialog measures willingness; typing the name measures
+  attention, and the failure you are guarding against is someone holding the _wrong_ chip.
+
+- **Read the tag before offering to destroy it.** Show its identifier and its current contents.
+  An unintended tag then announces itself, which no amount of confirmation copy achieves.
+
+- **"Already locked" is not a failure.** The tag is in exactly the requested state. Report it
+  distinctly from a lock that went wrong, or you will alarm someone about a perfectly good chip —
+  and check for it _before_ the confirmation gate, so nobody can type their way into being told a
+  no-op succeeded.
+
+- **You cannot retry to find out whether it worked.** Retrying is itself the destructive act. So
+  verify by re-reading the NDEF status afterwards, and if it does not come back read-only, say the
+  state is unknown rather than "probably fine".
+
+- **`writeLock` is a method on `NFCNDEFTag`.** Locking a non-NDEF chip is a different operation
+  against a different interface. Refuse rather than appearing to offer it.
+
+- **Do not add a `lock: Bool` to your write function.** A boolean parameter that sometimes destroys
+  the tag is what gets passed by accident in a refactor months later. Separate call site, separate
+  class, no shared branch.
+
 ## Removing a dependency
 
 - **Check what its config plugin was doing for you first.** `react-native-nfc-manager` generated the

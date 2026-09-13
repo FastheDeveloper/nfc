@@ -1,6 +1,11 @@
 # TapCard
 
-An NFC digital business card app for iOS and Android, built with Expo + React Native.
+An NFC app for **iOS**, built with Expo + React Native. Write your contact details to a physical
+tag, read any NDEF tag back, run a focus session you can only end by walking to the tag, and lock a
+tag permanently.
+
+The Android counterpart is written and compiles, but **has never been run** — no device has been
+available. Every Android claim in this repo is labelled ⛔ accordingly.
 Write your contact details to a physical NFC tag as a URL or a vCard, and read any NDEF
 tag back in human-readable form.
 
@@ -69,4 +74,4 @@ forced on us by NFC rather than chosen.
 - [x] **Phase 2** — Read & Tag Info screens, full NDEF parsing
 - [x] **Phase 3** — Profile editor, vCard + URL writing, capacity checks
 - [x] **Phase 4** — our own Expo Module in Kotlin + Swift: owning the native layer
-- [ ] **Phase 5** — read-only locking, EAS comparison, article prep
+- [x] **Phase 5** — read-only locking (EAS comparison deferred)

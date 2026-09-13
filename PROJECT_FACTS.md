@@ -15,7 +15,7 @@ since Phase 1.
 
 ## 1. WHAT THIS ACTUALLY IS
 
-**TapCard** — an NFC digital business card for iOS and Android. Write your contact details to a
+**TapCard** — an NFC app for **iOS**, with an Android counterpart that compiles and has never run. Write your contact details to a
 physical NFC tag as a URL or a vCard; read any NDEF tag back in human-readable form. No backend;
 the profile lives on the device and goes straight onto the chip.
 
@@ -95,7 +95,11 @@ connect → `queryNDEFStatus` → `readNDEF`. The OS draws a sheet you cannot re
 membership, a certificate, a provisioning profile — all before reading a single byte. Get it wrong
 and the failure is a **code-signing error that never says "NFC"**.
 
-## 4. ANDROID PATH ⛔
+## 4. ANDROID PATH ⛔ — the bonus appendix, not a promise
+
+The article is framed as an **iOS handbook**. Android appears once, at the end, clearly labelled as
+written-but-never-executed. Do not draft anything that implies parity, and do not show Android
+output — there isn't any.
 
 **Reader mode, not a session.** `NfcAdapter.enableReaderMode(activity, callback, flags, extras)` —
 a callback bound to the foreground **Activity**, firing on every tag, with no UI and no natural end.
