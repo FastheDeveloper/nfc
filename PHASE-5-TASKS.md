@@ -2,7 +2,7 @@
 
 Working state, not article material.
 
-**Status:** ✅ **T0–T4 done, verified on hardware 2026-09-13.** T5 (commit) handed over. Kotlin ⛔ never run.
+**Status:** ✅ **T0–T4 verified on hardware · EAS comparison written (unverified by design)** · T5 commit handed over · Kotlin ⛔ never run.
 
 ---
 
@@ -74,6 +74,13 @@ something physical.
 
 ## Deferred
 
-**EAS build comparison** — listed under Phase 5 in the README, but it is a separate piece of work
-with no NFC content. Worth doing for the article's "how would I ship this" section; not part of
-locking.
+**EAS build comparison** — ✅ **written 2026-09-13** as DEVLOG §5b and a handbook chapter, from
+Expo's documentation rather than from a build we ran. The project remains deliberately unlinked
+(no `extra.eas.projectId`), because `eas build:configure` creates a cloud project as a side effect.
+
+The headline finding: **EAS auto-enables `com.apple.developer.nfc.readersession.formats` on the App
+ID from the entitlements file** — the exact manual step that cost an afternoon in §1.9. And the
+trap: it will also _disable_ a capability that is enabled remotely but missing locally.
+
+- [ ] **Optional:** actually run one, which would mean linking a cloud project and spending build
+      credits. Would move the section from documentation-sourced to observed.

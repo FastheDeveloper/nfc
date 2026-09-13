@@ -74,4 +74,4 @@ forced on us by NFC rather than chosen.
 - [x] **Phase 2** — Read & Tag Info screens, full NDEF parsing
 - [x] **Phase 3** — Profile editor, vCard + URL writing, capacity checks
 - [x] **Phase 4** — our own Expo Module in Kotlin + Swift: owning the native layer
-- [x] **Phase 5** — read-only locking (EAS comparison deferred)
+- [x] **Phase 5** — read-only locking, EAS comparison

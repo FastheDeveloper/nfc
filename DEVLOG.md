@@ -2104,3 +2104,120 @@ attempted.
 Deliberately not done: the **EAS build comparison** listed under Phase 5 in the README. It is a
 separate piece of work with no NFC content, and belongs with the article's "how would I ship this"
 material rather than here.
+
+---
+
+## Phase 5b — EAS, and the step it would have saved
+
+Everything in this project was built locally: `expo run:ios`, Xcode, CocoaPods, a Gradle daemon,
+and — twice — a completely full disk. EAS Build is the alternative, and it is worth an honest
+comparison rather than a recommendation.
+
+⚠️ **This section is sourced from Expo's documentation, not from a build we ran.** The project is
+deliberately not linked to an EAS project — DEVLOG §0.3 records skipping `eas build:configure`
+because it creates a cloud project as a side effect, and that should be a decision rather than a
+scaffold artefact. `eas.json` was hand-written instead. Claims below are marked accordingly.
+
+### The setup we already had
+
+```json
+{
+  "cli": { "version": ">= 22.0.0", "appVersionSource": "remote" },
+  "build": {
+    "development": { "developmentClient": true, "distribution": "internal" },
+    "preview": { "distribution": "internal" },
+    "production": { "autoIncrement": true }
+  }
+}
+```
+
+Three profiles, written by hand in Phase 0 and never used. `eas-cli` 22.0.0 is installed and
+authenticated; `app.json` has no `extra.eas.projectId`, so nothing has been created remotely.
+
+### What this project would hand to EAS cleanly
+
+**Continuous Native Generation is the ideal case.** `ios/` and `android/` are gitignored and
+regenerated from `app.json`, so there is no native state to keep in sync — EAS prebuilds from the
+same inputs we do. A project with committed native directories has a much harder time.
+
+**A local module needs nothing special.** `modules/nfc-native/` lives in the repository and is
+autolinked by path, so there is no package to publish and no registry involved. The Swift and
+Kotlin travel with the commit.
+
+**The vendored directory is inert.** `vendor/react-native-nfc-manager/` is imported by nothing but
+a test file and excluded from lint and formatting, so it adds bytes to the upload and nothing else.
+
+### The one that matters: capabilities sync
+
+Phase 1's worst afternoon was this error:
+
+```
+Provisioning Profile "iOS Team Provisioning Profile: *" does not support
+the NFC Tag Reading capability.
+```
+
+The fix was manual and undiscoverable from the message: register an explicit App ID in the Apple
+developer portal, tick **NFC Tag Reading**, regenerate the profile. Nothing in the error suggests
+opening a browser (§1.9).
+
+**EAS does that step for you.** Per Expo's iOS capabilities reference, if a supported entitlement is
+present in the entitlements file, `eas build` enables the matching capability on the Apple Developer
+Console, and skips it when already enabled. `com.apple.developer.nfc.readersession.formats` —
+exactly the key this app declares — is on the supported list by name.
+
+So the single most painful manual step in the entire project is automated by the thing we did not
+use. That is worth saying plainly rather than defending the local path.
+
+### And the trap that comes with it
+
+The sync runs in both directions:
+
+> If a capability is enabled for your app remotely, but not present in the native entitlements file,
+> running `eas build` will automatically **disable** it.
+
+Which means a team that manages entitlements by hand in the portal _and_ builds with EAS will watch
+EAS switch things off. The entitlements file becomes the source of truth whether you intended that
+or not.
+
+`EXPO_NO_CAPABILITY_SYNC=1` opts out — and Expo notes that opting out means remote changes stop
+syncing, which can produce provisioning-profile mismatches later. Pick one owner for capabilities
+and let it own them.
+
+Note also that changing a capability invalidates existing provisioning profiles, so they need
+regenerating afterwards. Locally that is a manual dance; on EAS it is part of the same run.
+
+### What EAS would not have helped with
+
+Worth being even-handed, because "use EAS" is not an answer to most of this project's pain:
+
+| Problem                                        | Would EAS have helped?                                  |
+| ---------------------------------------------- | ------------------------------------------------------- |
+| NFC Tag Reading capability on the App ID       | ✅ automated                                            |
+| Full disk, twice, at 460 GB                    | ✅ builds happen elsewhere                              |
+| Gradle daemon holding memory after a build     | ✅ nothing runs locally                                 |
+| `pod install` needed after adding a Swift file | ✅ every build is clean                                 |
+| The deallocated CoreNFC session                | ❌ a code bug                                           |
+| Settling a promise twice                       | ❌ a code bug                                           |
+| The FeliCa polling entitlement                 | ❌ _not_ a capability — it is a key EAS does not manage |
+| `String.fromCharCode` truncating an emoji      | ❌ a dependency bug                                     |
+| Expo deriving `ERR_USER_CANCELLED`             | ❌ a wrong assumption                                   |
+| Reading a tag at all                           | ❌ there is no cloud substitute for a chip              |
+
+That last row is the honest summary. **EAS removes machine problems, not NFC problems.** Every
+finding in this project that was actually about NFC would have happened identically.
+
+### The trade, stated plainly
+
+Local builds cost disk, memory and setup. This project filled a 460 GB disk **twice**, had three
+background processes killed under memory pressure, and lost a full rebuild to a stale Gradle daemon.
+The first Android build took 13 minutes 40 seconds cold.
+
+EAS costs queue time and a cloud project, and moves your credentials to Expo's servers. It does not
+shorten the loop that matters here: **you still have to walk to a phone and hold a chip against it.**
+A cloud build that succeeds tells you nothing about whether the tag read.
+
+For a solo project with a working local toolchain, local wins on iteration speed. For a team, or a
+CI pipeline, or anyone who has just watched their disk hit 100% mid-build, the capability sync alone
+is a strong argument.
+
+**Still unverified**, and worth stating one more time: no EAS build was run for this project.

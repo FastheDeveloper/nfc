@@ -306,6 +306,21 @@ capability`** — Apple forbids special capabilities on a _wildcard_ App ID, and
   exclude it from ESLint and Prettier: its value is being wrong in documented ways, so reformatting
   it destroys the thing it demonstrates.
 
+## EAS Build
+
+- **EAS turns your entitlements file into the source of truth for App ID capabilities — in both
+  directions.** A supported entitlement present locally gets enabled on the Apple Developer Console;
+  a capability enabled remotely but _absent_ locally gets **disabled**. If your team ticks
+  capabilities by hand in the portal and also builds with EAS, EAS will switch them off.
+  `EXPO_NO_CAPABILITY_SYNC=1` opts out, at the cost of profile mismatches later.
+
+- **Not every entitlement is a "capability".** The FeliCa polling key
+  (`com.apple.developer.nfc.readersession.felica.systemcodes`) is an entitlement EAS does not manage
+  for you. Automated capability sync does not mean automated entitlements.
+
+- **Changing a capability invalidates existing provisioning profiles.** They need regenerating
+  afterwards — part of the same run on EAS, a manual dance locally.
+
 ## Tooling
 
 - **Bare `ios` and `android` in `.gitignore` match at any depth** — which silently excluded
