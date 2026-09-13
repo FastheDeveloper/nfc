@@ -12,9 +12,8 @@ import {
   capacityTitle,
   type Capacity,
 } from '../../lib/capacity';
-import { compressUri, mimeRecord, uriRecord } from '../../lib/ndefEncode';
 import { URI_PREFIXES } from '../../lib/ndef';
-import { encodeMessage } from '../../lib/ndefEncode';
+import { compressUri, encodeMessage, mimeRecord, uriRecord } from '../../lib/ndefEncode';
 import { writeTag, type WriteOutcome } from '../../lib/nfcBackend';
 import { isCancellation, toScanError, type ScanError } from '../../lib/scanError';
 import { toVCard } from '../../lib/vcard';
