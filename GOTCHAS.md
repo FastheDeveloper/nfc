@@ -306,6 +306,16 @@ capability`** — Apple forbids special capabilities on a _wildcard_ App ID, and
   exclude it from ESLint and Prettier: its value is being wrong in documented ways, so reformatting
   it destroys the thing it demonstrates.
 
+## Platform support
+
+- **Core NFC is iPhone-only, and the documentation never says so outright.** Apple's Core NFC page
+  lists "iPhone 7 and later" and simply omits iPad, which reads as an oversight rather than a rule.
+  The explicit statement lives in a [developer forums
+  reply](https://developer.apple.com/forums/thread/808604) from an Apple engineer: "At this time,
+  CoreNFC functionality is only available on iPhones with NFC capability." Check
+  `NFCReaderSession.readingAvailable` at runtime rather than inferring from a device list. This is
+  why the app sets `supportsTablet: false`.
+
 ## EAS Build
 
 - **EAS turns your entitlements file into the source of truth for App ID capabilities — in both

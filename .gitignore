@@ -31,3 +31,6 @@ expo-env.d.ts
 # otherwise a 247 MB APK tree lands in the repo.
 modules/*/android/build/
 modules/*/ios/build/
+
+# The article draft and its screenshots stay local — never pushed to origin
+drafts/

@@ -24,7 +24,7 @@ physical hardware, on both platforms.**
 
 |           | Android                                 | iOS                                                                                                    |
 | --------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Device    | A phone with NFC, USB debugging enabled | iPhone 7 or newer (no iPad has NFC)                                                                    |
+| Device    | A phone with NFC, USB debugging enabled | iPhone 7 or newer (Core NFC is iPhone-only)                                                            |
 | Toolchain | JDK 17, Android SDK, `adb`              | Xcode, CocoaPods                                                                                       |
 | Account   | none                                    | **Paid Apple Developer account** — the NFC entitlement is not available on a free provisioning profile |
 | Tags      | NTAG213/215/216 stickers                | same                                                                                                   |
